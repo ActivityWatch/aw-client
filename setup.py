@@ -9,5 +9,5 @@ setup(name='actwa-client',
       author_email='erik@bjareho.lt',
       url='https://github.com/ActivityWatch/actwa-client',
       packages=['actwa.client'],
-      install_requires=['actwa-core'],
+      install_requires=['actwa-core', 'requests'],
      )
