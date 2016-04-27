@@ -9,6 +9,6 @@ setup(name='aw-client',
       author_email='erik@bjareho.lt',
       url='https://github.com/ActivityWatch/aw-client',
       packages=['aw.client'],
-      install_requires=['aw-core', 'requests'],
+      install_requires=['aw-core', 'requests', 'appdirs'],
       namespace_packages=['aw'],
      )
