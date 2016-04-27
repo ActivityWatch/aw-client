@@ -7,7 +7,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 
 class ActivityWatchClient:
     def __init__(self, clientname, server_hostname="localhost", server_port="5000"):
-        self.logger = logging.getLogger("actwa-client")
+        self.logger = logging.getLogger("aw-client")
 
         self.client_name = clientname
         self.client_hostname = socket.gethostname()
