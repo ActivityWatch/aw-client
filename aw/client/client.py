@@ -7,10 +7,12 @@ import requests as req
 
 from . import config
 
+
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
 
 
+# TODO: Make resilient to server crashes/offline connection by storing unsent data locally (temporarily until server is up)
 class ActivityWatchClient:
     def __init__(self, clientname, testing=False):
         self.logger = logging.getLogger("aw-client")
