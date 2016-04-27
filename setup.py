@@ -2,12 +2,13 @@
 
 from setuptools import setup, find_packages
 
-setup(name='actwa-client',
+setup(name='aw-client',
       version='0.1',
       description='Client library for ActivityWatch',
       author='Erik Bjäreholt',
       author_email='erik@bjareho.lt',
-      url='https://github.com/ActivityWatch/actwa-client',
-      packages=['actwa.client'],
-      install_requires=['actwa-core', 'requests'],
+      url='https://github.com/ActivityWatch/aw-client',
+      packages=['aw.client'],
+      install_requires=['aw-core', 'requests'],
+      namespace_packages=['aw'],
      )
