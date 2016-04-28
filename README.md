@@ -1,5 +1,5 @@
-actwa-client
+aw-client
 ============
 
-Client library for ActivityWatch.
+Client library for ActivityWatch in Python.
 

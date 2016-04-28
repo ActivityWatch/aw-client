@@ -1,6 +1,6 @@
 import unittest
 
-from actwa.client import ActivityWatchClient
+from aw.client import ActivityWatchClient
 
 class ClientTest(unittest.TestCase):
     def setUp(self):
