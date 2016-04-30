@@ -29,27 +29,30 @@ default_config = {
     "testserver_port": 5666,
 }
 
+
 # Deprecated, might be salvaged later
 def initialize_config_dirs():
     if not os.path.exists(user_config_dir):
         logger.info("User config dir did not exist, creating")
         os.makedirs(user_config_dir)
 
+    """
     if not os.path.exists(user_config_dir+"/config.json"):
         logger.info("User config file did not exist, creating")
         shutil.copyfile()
+    """
 
 
 def generate_config():
     config_file_path = user_config_dir + "/config.json"
-    config = default_config.copy()
+    new_config = default_config.copy()
     if os.path.exists(config_file_path):
         with open(config_file_path) as f:
             user_config = json.load(f)
         for key in user_config:
-            config[key] = user_config[key]
+            new_config[key] = user_config[key]
 
-    return config
+    return new_config
 
 config = generate_config()
-print(config)
+logger.info("Configuration used: {}".format(config))
