@@ -17,7 +17,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 # TODO: Make resilient to server crashes/offline connection by storing unsent data locally
 #       (temporarily until server is up)
 
-class awclient:
+class ActivityWatchClient:
     def __init__(self, client_name, testing=False):
         self.logger = logging.getLogger("aw-client")
         self.testing = testing

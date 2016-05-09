@@ -1,4 +1,4 @@
 from .generate_config import config
 
-from .client import awclient
+from .client import ActivityWatchClient
 
