@@ -73,6 +73,8 @@ class ActivityWatchClient:
         if not self.testing:
             self.logger.info("Putting data in queue")
             self.failed_queue[endpoint].append(data)
+        else:
+            raise Exception('Could not contact server')
 
     def send_event(self, event: Event):
         # TODO: Notice if server responds with invalid session and create a new one
