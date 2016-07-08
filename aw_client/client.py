@@ -7,7 +7,7 @@ from typing import Optional
 
 import requests as req
 
-from aw.core.models import Event
+from aw_core.models import Event
 from . import config
 
 # FIXME: This line is probably badly placed
