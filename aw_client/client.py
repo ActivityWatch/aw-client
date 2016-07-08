@@ -17,6 +17,8 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 # TODO: Make resilient to server crashes/offline connection by storing unsent data locally
 #       (temporarily until server is up)
 
+# TODO: Should probably use OAuth or something
+
 class ActivityWatchClient:
     def __init__(self, client_name, testing=False):
         self.logger = logging.getLogger("aw-client")
@@ -64,6 +66,7 @@ class ActivityWatchClient:
 
     def _send(self, endpoint: str, data: dict) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
+        # FIXME: Use HTTPS whenever possible!
         url = "http://{}:{}/api/0/{}/{}".format(self.server_hostname, self.server_port, endpoint, self.client_name)
         response = req.post(url, data=json.dumps(data), headers=headers)
         response.raise_for_status()

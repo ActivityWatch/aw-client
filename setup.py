@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(name='aw-client',
       version='0.1',
@@ -8,7 +8,6 @@ setup(name='aw-client',
       author='Erik Bjäreholt',
       author_email='erik@bjareho.lt',
       url='https://github.com/ActivityWatch/aw-client',
-      namespace_packages=['aw'],
-      packages=['aw.client'],
+      packages=['aw_client'],
       install_requires=['aw-core', 'requests', 'appdirs'],
      )
