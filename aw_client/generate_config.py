@@ -1,5 +1,4 @@
 import os
-import shutil
 import json
 import logging
 
@@ -14,10 +13,8 @@ user-specified configuration in the user_config_dir.
 This variable is later imported into the package as aw.client.config
 """
 
-# TODO: Decide if program should use user_config_dir for overriding defaults, or copy defaults there.
-#       The former is probably more wise.
-
 logger = logging.getLogger("aw-client.config")
+logger.setLevel(logging.INFO)
 
 appname = "activitywatch"
 user_config_dir = appdirs.user_config_dir(appname)
@@ -30,20 +27,13 @@ default_config = {
 }
 
 
-# Deprecated, might be salvaged later
-def initialize_config_dirs():
-    if not os.path.exists(user_config_dir):
-        logger.info("User config dir did not exist, creating")
-        os.makedirs(user_config_dir)
-
-    """
-    if not os.path.exists(user_config_dir+"/config.json"):
-        logger.info("User config file did not exist, creating")
-        shutil.copyfile()
-    """
-
-
 def generate_config():
+    """
+    Take the defaults, and if a config file exists, use the settings specified
+    there as overrides for their respective defaults.
+    """
+    # TODO: Add support for individual watcher configs,
+    #       such as <user_config_dir>/<watcher>.json
     config_file_path = user_config_dir + "/config.json"
     new_config = default_config.copy()
     if os.path.exists(config_file_path):
