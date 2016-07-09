@@ -3,7 +3,7 @@ import logging
 import socket
 from collections import defaultdict
 from time import time
-from typing import Optional
+from typing import Optional, List, Union
 
 import requests as req
 
@@ -79,13 +79,25 @@ class ActivityWatchClient:
         else:
             raise Exception('Could not contact server')
 
-    def send_event(self, event: Event):
+    def send_event(self, event: Union[Event, List[Event]]):
         # TODO: Notice if server responds with invalid session and create a new one
         endpoint = "buckets/{}/events".format(self.bucket_name)
         data = event.to_json_dict()
         try:
             self._send(endpoint, data)
-            self.logger.debug("Sent activity to server: {}".format(event))
+            self.logger.debug("Sent event to server: {}".format(event))
         except req.RequestException as e:
             self.logger.warning("Failed to send event to server ({})".format(e))
             self._queue_failed(endpoint, data)
+
+    def send_events(self, events: List[Event]):
+        # TODO: Notice if server responds with invalid session and create a new one
+        endpoint = "buckets/{}/events".format(self.bucket_name)
+        data = [event.to_json_dict() for event in events]
+        try:
+            self._send(endpoint, data)
+            self.logger.debug("Sent events to server: {}".format(events))
+        except req.RequestException as e:
+            self.logger.warning("Failed to send events to server ({})".format(e))
+            for event in data:
+                self._queue_failed(endpoint, event)
