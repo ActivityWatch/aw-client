@@ -20,13 +20,13 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 # TODO: Should probably use OAuth or something
 
 class ActivityWatchClient:
-    def __init__(self, client_name, testing=False):
+    def __init__(self, bucket_name, testing=False):
         self.logger = logging.getLogger("aw-client")
         self.testing = testing
 
         self.session = {}
 
-        self.client_name = client_name
+        self.bucket_name = bucket_name
         self.client_hostname = socket.gethostname()
 
         self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
@@ -36,7 +36,7 @@ class ActivityWatchClient:
 
     def __enter__(self):
         # Should: be used to send a new-session message with eventual client settings etc.
-        # Should: Be used to generate a unique session-id to identify the session (hash(time.time() + client_name))
+        # Should: Be used to generate a unique session-id to identify the session (hash(time.time() + bucket_name))
         # Could: be used to generate a session key/authentication
         self._start_session()
         if self.session:
@@ -50,7 +50,7 @@ class ActivityWatchClient:
         self.session_active = False
 
     def _start_session(self):
-        session_id = "{}#{}".format(self.client_name, int(time() * 1000))
+        session_id = "{}#{}".format(self.bucket_name, int(time() * 1000))
         try:
             resp = self._send("session/start", {"session_id": session_id})
             data = resp.json()
@@ -67,7 +67,7 @@ class ActivityWatchClient:
     def _send(self, endpoint: str, data: dict) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
         # FIXME: Use HTTPS whenever possible!
-        url = "http://{}:{}/api/0/{}/{}".format(self.server_hostname, self.server_port, endpoint, self.client_name)
+        url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
         response = req.post(url, data=json.dumps(data), headers=headers)
         response.raise_for_status()
         return response
@@ -81,7 +81,7 @@ class ActivityWatchClient:
 
     def send_event(self, event: Event):
         # TODO: Notice if server responds with invalid session and create a new one
-        endpoint = "activity"
+        endpoint = "buckets/{}/events".format(self.bucket_name)
         data = event.to_json_dict()
         try:
             self._send(endpoint, data)
