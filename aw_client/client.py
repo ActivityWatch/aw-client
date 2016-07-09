@@ -1,8 +1,11 @@
 import json
 import logging
 import socket
+import appdirs
+import os
+import time
+import threading
 from collections import defaultdict
-from time import time
 from typing import Optional, List, Union
 
 import requests as req
@@ -32,7 +35,17 @@ class ActivityWatchClient:
         self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
         self.server_port = config["server_port"] if not testing else config["testserver_port"]
 
-        self.failed_queue = defaultdict(list)
+        # Setup failed queues dir
+        data_dir = appdirs.user_data_dir("aw-client")
+        self.failed_queues_dir = "{directory}/failed_events".format(directory=data_dir)
+        if not os.path.exists(self.failed_queues_dir):
+            os.makedirs(self.failed_queues_dir)
+        
+        # Find failed queue file
+        self.queue_file = "{directory}/{bucket}.jsonl".format(directory=self.failed_queues_dir, bucket=self.bucket_name)
+        
+        # Send old failed events
+        QueueTimerThread(self).start()
 
     def __enter__(self):
         # Should: be used to send a new-session message with eventual client settings etc.
@@ -50,7 +63,7 @@ class ActivityWatchClient:
         self.session_active = False
 
     def _start_session(self):
-        session_id = "{}#{}".format(self.bucket_name, int(time() * 1000))
+        session_id = "{}#{}".format(self.bucket_name, int(time.time() * 1000))
         try:
             resp = self._send("session/start", {"session_id": session_id})
             data = resp.json()
@@ -64,6 +77,21 @@ class ActivityWatchClient:
         if resp:
             self.session = {}
 
+    def _queue_failed_event(self, endpoint: str, data: dict):
+        with open(self.queue_file, "a+") as queue_fp:
+            queue_fp.write(json.dumps(data)+"\n")
+
+    def _send_failed_events(self):
+        if os.path.exists(self.queue_file):
+            failed_events = []
+            with open(self.queue_file, "r") as queue_fp:
+                queue_fp.seek(0, 0)
+                for event in queue_fp:
+                    failed_events.append(Event(**json.loads(event)))
+                print(failed_events)
+            open(self.queue_file, "w").close() # Truncate file
+            self.send_events(failed_events)
+
     def _send(self, endpoint: str, data: dict) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
         # FIXME: Use HTTPS whenever possible!
@@ -71,13 +99,6 @@ class ActivityWatchClient:
         response = req.post(url, data=json.dumps(data), headers=headers)
         response.raise_for_status()
         return response
-
-    def _queue_failed(self, endpoint: str, data: dict):
-        if not self.testing:
-            self.logger.info("Putting data in queue")
-            self.failed_queue[endpoint].append(data)
-        else:
-            raise Exception('Could not contact server')
 
     def send_event(self, event: Union[Event, List[Event]]):
         # TODO: Notice if server responds with invalid session and create a new one
@@ -88,7 +109,7 @@ class ActivityWatchClient:
             self.logger.debug("Sent event to server: {}".format(event))
         except req.RequestException as e:
             self.logger.warning("Failed to send event to server ({})".format(e))
-            self._queue_failed(endpoint, data)
+            self._queue_failed_event(endpoint, data)
 
     def send_events(self, events: List[Event]):
         # TODO: Notice if server responds with invalid session and create a new one
@@ -100,4 +121,17 @@ class ActivityWatchClient:
         except req.RequestException as e:
             self.logger.warning("Failed to send events to server ({})".format(e))
             for event in data:
-                self._queue_failed(endpoint, event)
+                self._queue_failed_event(endpoint, event)
+
+
+class QueueTimerThread(threading.Thread):
+    def __init__(self, aw_client):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.aw_client = aw_client
+
+    def run(self):
+        while True:
+            self.aw_client._send_failed_events()
+            time.sleep(180)
+
