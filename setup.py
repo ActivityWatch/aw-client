@@ -9,5 +9,11 @@ setup(name='aw-client',
       author_email='erik@bjareho.lt',
       url='https://github.com/ActivityWatch/aw-client',
       packages=['aw_client'],
-      install_requires=['aw-core', 'requests', 'appdirs'],
-     )
+      install_requires=[
+          'aw-core',
+          'requests',
+          'appdirs'
+      ],
+      dependency_links=[
+          'https://github.com/ActivityWatch/aw-core/tarball/master#aw-core'
+      ])
