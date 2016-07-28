@@ -15,5 +15,5 @@ setup(name='aw-client',
           'appdirs'
       ],
       dependency_links=[
-          'https://github.com/ActivityWatch/aw-core/tarball/master#aw-core'
+          'https://github.com/ActivityWatch/aw-core/tarball/master#egg=aw-core'
       ])
