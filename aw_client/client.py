@@ -17,9 +17,6 @@ from . import config
 logging.getLogger("requests").setLevel(logging.WARNING)
 
 
-# TODO: Make resilient to server crashes/offline connection by storing unsent data locally
-#       (temporarily until server is up)
-
 # TODO: Should probably use OAuth or something
 
 class ActivityWatchClient:
@@ -40,46 +37,16 @@ class ActivityWatchClient:
         self.failed_queues_dir = "{directory}/failed_events".format(directory=data_dir)
         if not os.path.exists(self.failed_queues_dir):
             os.makedirs(self.failed_queues_dir)
-        
+
         # Find failed queue file
         self.queue_file = "{directory}/{bucket}.jsonl".format(directory=self.failed_queues_dir, bucket=self.bucket_name)
-        
+
         # Send old failed events
         QueueTimerThread(self).start()
 
-    def __enter__(self):
-        # Should: be used to send a new-session message with eventual client settings etc.
-        # Should: Be used to generate a unique session-id to identify the session (hash(time.time() + bucket_name))
-        # Could: be used to generate a session key/authentication
-        self._start_session()
-        if self.session:
-            self.logger.info("Started session")
-        else:
-            self.logger.error("Failed to start session")
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Should: be used to send a end-session message
-        # Could: be used to tell server to discard the session key
-        self.session_active = False
-
-    def _start_session(self):
-        session_id = "{}#{}".format(self.bucket_name, int(time.time() * 1000))
-        try:
-            resp = self._send("session/start", {"session_id": session_id})
-            data = resp.json()
-            self.session = {"session_id": session_id, "session_key": data["session_key"]}
-        except req.RequestException as e:
-            self.logger.error("Could not start session: {}".format(e))
-
-    def _stop_session(self):
-        assert self.session_active
-        resp = self._send("session/stop", self.session)
-        if resp:
-            self.session = {}
-
     def _queue_failed_event(self, endpoint: str, data: dict):
         with open(self.queue_file, "a+") as queue_fp:
-            queue_fp.write(json.dumps(data)+"\n")
+            queue_fp.write(json.dumps(data) + "\n")
 
     def _send_failed_events(self):
         if os.path.exists(self.queue_file):
@@ -88,8 +55,9 @@ class ActivityWatchClient:
                 queue_fp.seek(0, 0)
                 for event in queue_fp:
                     failed_events.append(Event(**json.loads(event)))
-                print(failed_events)
-            open(self.queue_file, "w").close() # Truncate file
+                if len(failed_events) != 0:
+                    print(failed_events)
+            open(self.queue_file, "w").close()  # Clear file
             self.send_events(failed_events)
 
     def _send(self, endpoint: str, data: dict) -> Optional[req.Response]:
