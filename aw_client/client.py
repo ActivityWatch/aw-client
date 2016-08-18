@@ -132,18 +132,24 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets')
 
-    def create_bucket(self, bucket_id: str, event_type: str):
+    def create_bucket(self, bucket_id, event_type: str):
         # Check if bucket exists
-        endpoint = "buckets/{}".format(bucket_id)
-        data = {
-            'client': self.client_name,
-            'hostname': self.client_hostname,
-            'type': event_type,
-        }
-        try:
-            self._post(endpoint, data)
-        except req.RequestException as e:
-            self.logger.error("Unable to create bucket: {}".format(e))
+        buckets = self.get_buckets()
+        if bucket_id in buckets:
+            return False  # Don't do anything if bucket already exists
+        else:
+            # Create bucket
+            endpoint = "buckets/{}".format(bucket_id)
+            data = {
+                'client': self.client_name,
+                'hostname': self.client_hostname,
+                'type': event_type,
+            }
+            try:
+                self._post(endpoint, data)
+            except req.RequestException as e:
+                self.logger.error("Unable to create bucket: {}".format(e))
+            return True
 
 
 
