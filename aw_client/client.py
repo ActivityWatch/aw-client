@@ -130,7 +130,7 @@ class ActivityWatchClient:
                 self._queue_failed_event(bucket, event)
 
     def get_buckets(self):
-        return self._get('buckets')
+        return self._get('buckets').json()
 
     def create_bucket(self, bucket_id, event_type: str):
         # Check if bucket exists
