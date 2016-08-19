@@ -10,13 +10,12 @@ This module should as it's final result define a variable `config`.
 This variable should contain the config generated from defaults and
 user-specified configuration in the user_config_dir.
 
-This variable is later imported into the package as aw.client.config
+This variable is later imported into the package as aw_client.config
 """
 
-logger = logging.getLogger("aw-client.config")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger("aw.client.config")
 
-appname = "activitywatch"
+appname = "aw-client"
 user_config_dir = appdirs.user_config_dir(appname)
 
 default_config = {
@@ -34,7 +33,7 @@ def generate_config():
     """
     # TODO: Add support for individual watcher configs,
     #       such as <user_config_dir>/<watcher>.json
-    config_file_path = user_config_dir + "/config.json"
+    config_file_path = os.path.join(user_config_dir, "config.json")
     new_config = default_config.copy()
     if os.path.exists(config_file_path):
         with open(config_file_path) as f:

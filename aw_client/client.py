@@ -5,7 +5,6 @@ import appdirs
 import os
 import time
 import threading
-from collections import defaultdict
 from typing import Optional, List, Union
 
 import requests as req
@@ -34,24 +33,23 @@ class ActivityWatchClient:
 
         # Setup failed queues dir
         self.data_dir = appdirs.user_data_dir("aw-client")
-        self.failed_queues_dir = "{}/failed_events/{}/".format(self.data_dir, self.client_name)
+        self.failed_queues_dir = os.path.join(self.data_dir, "failed_events", self.client_name)
         if not os.path.exists(self.failed_queues_dir):
             os.makedirs(self.failed_queues_dir)
-        
+
         # Send old failed events
         QueueTimerThread(self).start()
 
     def _queue_failed_event(self, bucket: str, data: dict):
         # Find failed queue file
-        endpoint = 'buckets/{}/events'.format(bucket)
-        queue_file = "{d}/{f}".format(d=self.failed_queues_dir, f=bucket)
+        queue_file = os.path.join(self.failed_queues_dir, bucket)
         with open(queue_file, "a+") as queue_fp:
-            queue_fp.write(json.dumps(data)+"\n")
+            queue_fp.write(json.dumps(data) + "\n")
 
     def _post_failed_events(self):
         failed_events = []
         for bucket in os.listdir(self.failed_queues_dir):
-            queue_file_path = "{}/{}".format(self.failed_queues_dir, bucket)
+            queue_file_path = os.path.join(self.failed_queues_dir, bucket)
             with open(queue_file_path, "r") as queue_fp:
                 for event in queue_fp:
                     failed_events.append(Event(**json.loads(event)))
@@ -62,7 +60,6 @@ class ActivityWatchClient:
 
     def _post(self, endpoint: str, data: dict) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
-        # FIXME: Use HTTPS whenever possible!
         url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
         response = req.post(url, data=json.dumps(data), headers=headers)
         response.raise_for_status()
@@ -73,9 +70,8 @@ class ActivityWatchClient:
         response = req.get(url)
         response.raise_for_status()
         return response
-    
+
     def send_event(self, bucket, event: Union[Event, List[Event]]):
-        # TODO: Notice if server responds with invalid session and create a new one
         endpoint = "buckets/{}/events".format(bucket)
         data = event.to_json_dict()
         try:
@@ -86,7 +82,6 @@ class ActivityWatchClient:
             self._queue_failed_event(bucket, data)
 
     def send_events(self, bucket, events: List[Event]):
-        # TODO: Notice if server responds with invalid session and create a new one
         endpoint = "buckets/{}/events".format(bucket)
         data = [event.to_json_dict() for event in events]
         try:
@@ -120,15 +115,13 @@ class ActivityWatchClient:
             return True
 
 
-
 class QueueTimerThread(threading.Thread):
-    def __init__(self, aw_client):
+    def __init__(self, client):
         threading.Thread.__init__(self)
         self.daemon = True
-        self.aw_client = aw_client
+        self.client = client
 
     def run(self):
         while True:
-            self.aw_client._post_failed_events()
+            self.client._post_failed_events()
             time.sleep(180)
-
