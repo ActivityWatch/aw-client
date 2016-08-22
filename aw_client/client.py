@@ -25,7 +25,7 @@ class ActivityWatchClient:
 
         self.session = {}
 
-        self.client_name = client_name
+        self.client_name = client_name + "-testing" if testing else ""
         self.client_hostname = socket.gethostname()
 
         self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
