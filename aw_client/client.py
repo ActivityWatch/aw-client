@@ -38,6 +38,7 @@ class ActivityWatchClient:
             os.makedirs(self.failed_queues_dir)
 
         # Send old failed events
+        self._post_failed_events()
         QueueTimerThread(self).start()
 
     def _queue_failed_event(self, bucket: str, data: dict):
@@ -71,7 +72,7 @@ class ActivityWatchClient:
         response.raise_for_status()
         return response
 
-    def send_event(self, bucket, event: Union[Event, List[Event]]):
+    def send_event(self, bucket, event: Event):
         endpoint = "buckets/{}/events".format(bucket)
         data = event.to_json_dict()
         try:
@@ -92,6 +93,16 @@ class ActivityWatchClient:
             for event in data:
                 self._queue_failed_event(bucket, event)
 
+    def replace_last_event(self, bucket, event: Event):
+        endpoint = "buckets/{}/events/replace_last".format(bucket)
+        data = event.to_json_dict()
+        try:
+            self._post(endpoint, data)
+            self.logger.debug("Sent event to server: {}".format(event))
+        except req.RequestException as e:
+            self.logger.warning("Failed to send event to server ({})".format(e))
+            self._queue_failed_event(bucket, data)
+    
     def get_buckets(self):
         return self._get('buckets').json()
 
@@ -123,5 +134,5 @@ class QueueTimerThread(threading.Thread):
 
     def run(self):
         while True:
-            self.client._post_failed_events()
             time.sleep(180)
+            self.client._post_failed_events()
