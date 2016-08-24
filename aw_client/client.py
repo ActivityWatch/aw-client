@@ -20,7 +20,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 
 class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False):
-        self.logger = logging.getLogger("aw-client")
+        self.logger = logging.getLogger("aw.client")
         self.testing = testing
 
         self.session = {}
@@ -102,7 +102,7 @@ class ActivityWatchClient:
         except req.RequestException as e:
             self.logger.warning("Failed to send event to server ({})".format(e))
             self._queue_failed_event(bucket, data)
-    
+
     def get_buckets(self):
         return self._get('buckets').json()
 
