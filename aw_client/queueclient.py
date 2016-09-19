@@ -1,61 +1,26 @@
 import json
-import logging
-import socket
 import os
 import time
 import threading
 from functools import wraps
-from typing import Optional, List, Union, Callable
+from typing import List, Union, Callable
 from collections import namedtuple, deque
 
-import requests
-
 from aw_core.models import Event
-from . import config
-
-# FIXME: This line is probably badly placed
-logging.getLogger("requests").setLevel(logging.WARNING)
+from .client import ActivityWatchClient
 
 AWRequest = namedtuple("AWRequest", ["action", "args", "kwargs"])
 
 
-# TODO: Needs authentication
-class ActivityWatchClient:
+class ActivityWatchQueueClient(ActivityWatchClient):
     def __init__(self, client_name: str, testing=False, use_queue=True):
-        self.logger = logging.getLogger("aw.client")
-        self.testing = testing
-
-        self.session = {}
-
-        self.client_name = client_name + ("-testing" if testing else "")
-        self.client_hostname = socket.gethostname()
-
-        self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
-        self.server_port = config["server_port"] if not testing else config["testserver_port"]
+        ActivityWatchClient.__init__(self, client_name, testing=testing)
 
         # Send old failed events
         self._post_failed_events()
 
         self.dispatcher = RequestDispatcher(self)
         self.dispatcher.start()
-
-    def _send_request(self, req: AWRequest):
-        """Should only be called by the dispatcher"""
-        f = getattr(self, req.action)
-        f(*req.args, **req.kwargs, is_queued=True)
-
-    def _post(self, endpoint: str, data: dict) -> Optional[requests.Response]:
-        headers = {"Content-type": "application/json"}
-        url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
-        response = requests.post(url, data=json.dumps(data), headers=headers)
-        response.raise_for_status()
-        return response
-
-    def _get(self, endpoint: str) -> Optional[requests.Response]:
-        url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
-        response = requests.get(url)
-        response.raise_for_status()
-        return response
 
     def queue_request(self, f) -> Callable[..., bool]:
         """Decorator that queues requests using RequestDispatcher if self.use_queue is True"""
@@ -81,46 +46,26 @@ class ActivityWatchClient:
             return f
 
     @queue_request
+    def create_bucket(self, bucket_id: str, event_type: str):
+        ActivityWatchClient.create_bucket(self, bucket_id, event_type)
+
+    @queue_request
     def send_event(self, bucket: str, event: Union[dict, Event]):
-        endpoint = "buckets/{}/events".format(bucket)
         if isinstance(event, Event):
             event = event.to_json_dict()
-        self._post(endpoint, event)
-        self.logger.debug("Sent event to server: {}".format(event))
+        ActivityWatchClient.send_event(self, bucket, event)
 
     @queue_request
     def send_events(self, bucket: str, events: Union[List[dict], List[Event]]):
-        endpoint = "buckets/{}/events".format(bucket)
         if isinstance(events[0], Event):
             events = [event.to_json_dict() for event in events]
-        self._post(endpoint, events)
-        self.logger.debug("Sent events to server: {}".format(events))
+        ActivityWatchClient.send_events(self, bucket, events)
 
     @queue_request
     def replace_last_event(self, bucket: str, event: Event):
-        endpoint = "buckets/{}/events/replace_last".format(bucket)
-        data = event.to_json_dict()
-        self._post(endpoint, data)
-        self.logger.debug("Sent event to server: {}".format(event))
-
-    def get_buckets(self):
-        return self._get('buckets').json()
-
-    @queue_request
-    def create_bucket(self, bucket_id: str, event_type: str):
-        # Check if bucket exists
-        buckets = self.get_buckets()
-        if bucket_id in buckets:
-            return False  # Don't do anything if bucket already exists
-        else:
-            # Create bucket
-            endpoint = "buckets/{}".format(bucket_id)
-            data = {
-                'client': self.client_name,
-                'hostname': self.client_hostname,
-                'type': event_type,
-            }
-            self._post(endpoint, data)
+        if isinstance(event, Event):
+            event = event.to_json_dict()
+        ActivityWatchClient.replace_last_event(self, bucket, event)
 
 
 class RequestDispatcher(threading.Thread):
@@ -161,11 +106,16 @@ class RequestDispatcher(threading.Thread):
         with open(self.queue_file, "w") as fp:
             fp.writelines(lines)
 
+    def _send_request(self, req: AWRequest):
+        """Should only be called by the dispatcher"""
+        f = getattr(self.client, req.action)
+        f(*req.args, is_queued=True, **req.kwargs)
+
     def _dispatch(self):
         while len(self._queue) != 0:
             request = self._queue[0]
             # TODO: Check if successful
-            success = self.client._send_request()
+            success = self._send_request()
 
             if success:
                 # If successful
