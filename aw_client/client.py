@@ -60,6 +60,11 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets').json()
 
+    def get_events(self, bucket) -> List[Event]:
+        endpoint = "buckets/{}/events".format(bucket)
+        events = self._get(endpoint).json()
+        return [Event(**event) for event in events]
+
     def create_bucket(self, bucket_id, event_type: str) -> bool:
         # Check if bucket exists
         buckets = self.get_buckets()
