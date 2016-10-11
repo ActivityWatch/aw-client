@@ -56,8 +56,8 @@ class ActivityWatchClient:
                     failed_events.append(Event(**json.loads(event)))
                 if len(failed_events) != 0:
                     self.logger.info("Sent failed events: {}".format(failed_events))
-            open(queue_file_path, "w").close()  # Clear file
-            self.send_events(bucket, failed_events)
+                    open(queue_file_path, "w").close()  # Clear file
+                    self.send_events(bucket, failed_events)
 
     def _post(self, endpoint: str, data: dict) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
