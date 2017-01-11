@@ -152,23 +152,21 @@ class ActivityWatchClient:
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
         entry = {"endpoint": endpoint, "data": data}
-        self.queue_file_lock.acquire()
-        with open(self.queue_file, "a+") as queue_fp:
-            queue_fp.write(json.dumps(entry) + "\n")
-        self.queue_file_lock.release()
+        with self.queue_file_lock:
+            with open(self.queue_file, "a+") as queue_fp:
+                queue_fp.write(json.dumps(entry) + "\n")
 
     def _post_failed_requests(self):
         failed_requests = []
-        self.queue_file_lock.acquire()
-        with open(self.queue_file, "r") as queue_fp:
-            for request in queue_fp:
-                failed_requests.append(json.loads(request))
-            if len(failed_requests) != 0:
-                open(self.queue_file, "w").close()  # Clear file
-                logger.info("Sending {} failed events: {}".format(len(failed_requests), failed_requests))
-                for request in failed_requests:
-                    self._post(request['endpoint'], request['data'])
-        self.queue_file_lock.release()
+        with self.queue_file_lock:
+            with open(self.queue_file, "r") as queue_fp:
+                for request in queue_fp:
+                    failed_requests.append(json.loads(request))
+                if len(failed_requests) != 0:
+                    open(self.queue_file, "w").close()  # Clear file
+                    logger.info("Sending {} failed events: {}".format(len(failed_requests), failed_requests))
+                    for request in failed_requests:
+                        self._post(request['endpoint'], request['data'])
 
     #
     #   Connection methods
