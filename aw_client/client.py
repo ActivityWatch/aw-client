@@ -34,7 +34,7 @@ class ActivityWatchClient:
         self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
         self.server_port = config["server_port"] if not testing else config["testserver_port"]
 
-        # Setup failed queues dir
+        # Setup failed queues file
         self.data_dir = get_data_dir("aw-client")
         self.failed_queues_dir = os.path.join(self.data_dir, "failed_events")
         if not os.path.exists(self.failed_queues_dir):
@@ -112,11 +112,6 @@ class ActivityWatchClient:
                 return True
 
     #
-    #   Failed request queue handling
-    #
-
-
-    #
     #   Connection methods
     #
 
@@ -125,6 +120,7 @@ class ActivityWatchClient:
             self.dispatch_thread.start()
 
     def disconnect(self):
+        # FIXME: doesn't disconnect immediately
         self.dispatch_thread.running = False
 
 
@@ -147,19 +143,21 @@ class PostDispatchThread(threading.Thread):
     def _load_queue(self):
         # If crash when lost connection, queue failed requests
         failed_requests = []
+        open(self.client.queue_file, "a").close()  # Create file if doesn't exist
         with open(self.client.queue_file, "r") as queue_fp:
             for request in queue_fp:
                 failed_requests.append(json.loads(request))
         open(self.client.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
-            logger.info("Adding {} failed events to queue to send: {}".format(len(failed_requests), failed_requests))
+            logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
             for request in failed_requests:
                 self.queue.put([request['endpoint'], request['data']])
 
     def _save_queue(self):
-        open(self.client.queue_file, "w").close()  # Clear file
-        for request in self.queue.queue:
-            self.client._queue_failed_request(*request)
+        # When lost connection, save queue to file for later sending
+        with open(self.client.queue_file, "w") as queue_fp:
+            for request in self.queue.queue:
+                queue_fp.write(json.dumps(request) + "\n")
 
     def run(self):
         while self.running:
