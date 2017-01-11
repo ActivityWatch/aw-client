@@ -6,6 +6,7 @@ import os
 import time
 import threading
 from typing import Optional, List, Union
+from queue import Queue
 
 import requests as req
 
@@ -24,7 +25,6 @@ class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False):
         self.testing = testing
 
-        self.connected = False
         self.buckets = []
         self.session = {}
 
@@ -40,9 +40,8 @@ class ActivityWatchClient:
         if not os.path.exists(self.failed_queues_dir):
             os.makedirs(self.failed_queues_dir)
         self.queue_file = os.path.join(self.failed_queues_dir, self.client_name)
-        self.queue_file_lock = threading.Lock()
 
-        self.reconnect_thread = None
+        self.dispatch_thread = PostDispatchThread(self)
 
     #
     #   Get/Post base requests
@@ -73,45 +72,17 @@ class ActivityWatchClient:
     def send_event(self, bucket, event: Event):
         endpoint = "buckets/{}/events".format(bucket)
         data = event.to_json_dict()
-        if self.connected:
-            try:
-                self._post(endpoint, data)
-                logger.debug("Sent event to server: {}".format(event))
-            except req.RequestException as e:
-                self._connection_lost()
-                logger.warning("Failed to send event to server ({})".format(e))
-                self._queue_failed_request(endpoint, data)
-        else:
-            self._queue_failed_request(endpoint, data)
+        self.dispatch_thread.add_request(endpoint, data)
 
     def send_events(self, bucket, events: List[Event], ignore_failed=False):
         endpoint = "buckets/{}/events".format(bucket)
         data = [event.to_json_dict() for event in events]
-        if self.connected:
-            try:
-                self._post(endpoint, data)
-                logger.debug("Sent events to server: {}".format(events))
-            except req.RequestException as e:
-                self._connection_lost()
-                logger.warning("Failed to send events to server ({})".format(e))
-                for event in data:
-                    self._queue_failed_request(endpoint, event)
-        else:
-            self._queue_failed_request(endpoint, data)
+        self.dispatch_thread.add_request(endpoint, data)
 
     def replace_last_event(self, bucket, event: Event):
         endpoint = "buckets/{}/events/replace_last".format(bucket)
         data = event.to_json_dict()
-        if self.connected:
-            try:
-                self._post(endpoint, data)
-                logger.debug("Sent event to server: {}".format(event))
-            except req.RequestException as e:
-                self._connection_lost()
-                logger.warning("Failed to send event to server ({})".format(e))
-                self._queue_failed_request(endpoint, data)
-        else:
-            self._queue_failed_request(endpoint, data)
+        self.dispatch_thread.add_request(endpoint, data)
 
     #
     #   Bucket get/post requests
@@ -122,8 +93,6 @@ class ActivityWatchClient:
 
     def setup_bucket(self, bucket_id, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
-        if self.connected:
-            self._create_buckets()
 
     def _create_buckets(self):
         # Check if bucket exists
@@ -139,10 +108,7 @@ class ActivityWatchClient:
                     'hostname': self.client_hostname,
                     'type': bucket['etype'],
                 }
-                try:
-                    self._post(endpoint, data)
-                except req.RequestException as e:
-                    logger.error("Failed to create bucket: {}".format(e))
+                self._post(endpoint, data)
                 return True
 
     #
@@ -152,60 +118,70 @@ class ActivityWatchClient:
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
         entry = {"endpoint": endpoint, "data": data}
-        with self.queue_file_lock:
-            with open(self.queue_file, "a+") as queue_fp:
-                queue_fp.write(json.dumps(entry) + "\n")
-
-    def _post_failed_requests(self):
-        failed_requests = []
-        with self.queue_file_lock:
-            with open(self.queue_file, "r") as queue_fp:
-                for request in queue_fp:
-                    failed_requests.append(json.loads(request))
-                if len(failed_requests) != 0:
-                    open(self.queue_file, "w").close()  # Clear file
-                    logger.info("Sending {} failed events: {}".format(len(failed_requests), failed_requests))
-                    for request in failed_requests:
-                        self._post(request['endpoint'], request['data'])
+        with open(self.queue_file, "a+") as queue_fp:
+            queue_fp.write(json.dumps(entry) + "\n")
 
     #
     #   Connection methods
     #
 
     def connect(self):
-        if not self._try_connect():
-            logger.warning("Can't connect to aw-server, will queue events until connection is available")
-            if self.reconnect_thread == None:
-                self.reconnect_thread = ReconnectThread(self).start()
+        if not self.dispatch_thread.is_alive():
+            self.dispatch_thread.start()
 
-    def _try_connect(self):
-        try:
-            self._create_buckets()
-            self._post_failed_requests()
-            self.connected = True
-            return True
-        except req.RequestException as e:
-            return False
-
-    def _connection_lost(self):
-        """
-            Call this when we lose connection to the server
-        """
-        self.connected = False
-        if self.reconnect_thread == None:
-            logger.warning("Connection to aw-server lost, will queue events until connection is available again")
-            self.reconnect_thread = ReconnectThread(self).start()
-
-
-class ReconnectThread(threading.Thread):
+class PostDispatchThread(threading.Thread):
     def __init__(self, client):
         threading.Thread.__init__(self)
         self.daemon = True
+        self.connected = False
         self.client = client
+        self.queue = Queue()
+        self.failed_request = None
+
+        # If crash when lost connection, queue failed requests
+        # Issue: You know
+        failed_requests = []
+        with open(self.client.queue_file, "r") as queue_fp:
+            for request in queue_fp:
+                failed_requests.append(json.loads(request))
+            if len(failed_requests) > 0:
+                logger.info("Queuing {} failed events: {}".format(len(failed_requests), failed_requests))
+                for request in failed_requests:
+                    self.add_request(request['endpoint'], request['data'])
+                open(self.client.queue_file, "w").close()  # Clear file
+        open(self.client.queue_file, "w").close()  # Clear file
 
     def run(self):
-        while not self.client.connected:
-            if self.client._try_connect():
-                logger.warning("Connection to aw-server established again")
-            else:
-                time.sleep(60)
+        while True:
+            while not self.connected:
+                try:
+                    # Try to connect
+                    self.client._create_buckets()
+                    self.connected = True
+                    logger.warning("Connection to aw-server established")
+
+                except req.RequestException as e:
+                    # If unable to connect, retry in 10s
+                    time.sleep(10)
+
+            while self.connected:
+                try:
+                    if self.failed_request:
+                        request = self.failed_request
+                        self.failed_request = None
+                    else:
+                        request = self.queue.get()
+                    endpoint = request[0]
+                    data = request[1]
+
+                    self.client._post(endpoint, data)
+                except req.RequestException as e:
+                    self.connected = False
+                    self.failed_request = request
+                    logger.warning("Can't connect to aw-server, will queue events until connection is available")
+
+    def add_request(self, endpoint, data):
+        self.queue.put([endpoint, data])
+        if not self.connected:
+            self.client._queue_failed_request(endpoint, data)
+
