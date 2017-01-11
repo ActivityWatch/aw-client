@@ -40,7 +40,7 @@ class ActivityWatchClient:
             os.makedirs(self.failed_queues_dir)
         self.queue_file = os.path.join(self.failed_queues_dir, self.client_name)
 
-        self.reconnect_thread = ReconnectThread(self)
+        self.reconnect_thread = None
 
     #
     #   Get/Post base requests
@@ -174,8 +174,8 @@ class ActivityWatchClient:
             self.connected = True
         else:
             logger.warning("Can't connect to aw-server, will queue events until connection is available")
-            if not self.reconnect_thread.is_alive():
-                self.reconnect_thread.start()
+            if self.reconnect_thread == None:
+                self.reconnect_thread = ReconnectThread(self).start()
 
     def _try_connect(self):
         try:
@@ -190,8 +190,9 @@ class ActivityWatchClient:
             Call this when we lose connection to the server
         """
         self.connected = False
-        if not self.reconnect_thread.is_alive():
-            self.reconnect_thread.start()
+        if self.reconnect_thread == None:
+            logger.warning("Connection to aw-server lost, will queue events until connection is available again")
+            self.reconnect_thread = ReconnectThread(self).start()
 
 
 class ReconnectThread(threading.Thread):
@@ -203,6 +204,7 @@ class ReconnectThread(threading.Thread):
     def run(self):
         while not self.client.connected:
             if self.client._try_connect():
+                self.client.connected = True
                 logger.warning("Connection to aw-server established again")
             else:
                 time.sleep(60)
