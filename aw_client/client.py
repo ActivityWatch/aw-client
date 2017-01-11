@@ -174,9 +174,7 @@ class ActivityWatchClient:
     #
 
     def connect(self):
-        if self._try_connect():
-            self.connected = True
-        else:
+        if not self._try_connect():
             logger.warning("Can't connect to aw-server, will queue events until connection is available")
             if self.reconnect_thread == None:
                 self.reconnect_thread = ReconnectThread(self).start()
@@ -185,6 +183,7 @@ class ActivityWatchClient:
         try:
             self._create_buckets()
             self._post_failed_requests()
+            self.connected = True
             return True
         except req.RequestException as e:
             return False
@@ -208,7 +207,6 @@ class ReconnectThread(threading.Thread):
     def run(self):
         while not self.client.connected:
             if self.client._try_connect():
-                self.client.connected = True
                 logger.warning("Connection to aw-server established again")
             else:
                 time.sleep(60)
