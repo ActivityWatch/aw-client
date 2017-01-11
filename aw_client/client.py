@@ -145,7 +145,6 @@ class PostDispatchThread(threading.Thread):
             queue_fp.write(json.dumps(entry) + "\n")
 
     def _load_queue(self):
-        print("Loading queue")
         # If crash when lost connection, queue failed requests
         failed_requests = []
         with open(self.client.queue_file, "r") as queue_fp:
@@ -153,12 +152,11 @@ class PostDispatchThread(threading.Thread):
                 failed_requests.append(json.loads(request))
         open(self.client.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
-            logger.info("Queuing {} failed events: {}".format(len(failed_requests), failed_requests))
+            logger.info("Adding {} failed events to queue to send: {}".format(len(failed_requests), failed_requests))
             for request in failed_requests:
                 self.queue.put([request['endpoint'], request['data']])
 
     def _save_queue(self):
-        print("Saving queue")
         open(self.client.queue_file, "w").close()  # Clear file
         for request in self.queue.queue:
             self.client._queue_failed_request(*request)
