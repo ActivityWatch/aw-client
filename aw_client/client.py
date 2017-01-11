@@ -10,6 +10,7 @@ from typing import Optional, List, Union
 import requests as req
 
 from aw_core.models import Event
+from aw_core.dirs import get_data_dir
 from . import config
 
 # FIXME: This line is probably badly placed
@@ -34,7 +35,7 @@ class ActivityWatchClient:
         self.server_port = config["server_port"] if not testing else config["testserver_port"]
 
         # Setup failed queues dir
-        self.data_dir = appdirs.user_data_dir("aw-client")
+        self.data_dir = get_data_dir("aw-client")
         self.failed_queues_dir = os.path.join(self.data_dir, "failed_events")
         if not os.path.exists(self.failed_queues_dir):
             os.makedirs(self.failed_queues_dir)
