@@ -168,7 +168,7 @@ class PostDispatchThread(threading.Thread):
                     logger.warning("Connection to aw-server established")
                 except req.RequestException as e:
                     # If unable to connect, retry in 10s
-                    time.sleep(10)
+                    time.sleep(40)
             self._load_queue()
             while self.connected and self.running:
                 request = self.queue.get()
