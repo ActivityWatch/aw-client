@@ -39,6 +39,7 @@ class ActivityWatchClient:
         if not os.path.exists(self.failed_queues_dir):
             os.makedirs(self.failed_queues_dir)
         self.queue_file = os.path.join(self.failed_queues_dir, self.client_name)
+        self.queue_file_lock = threading.Lock()
 
         self.reconnect_thread = None
 
@@ -150,20 +151,23 @@ class ActivityWatchClient:
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
         entry = {"endpoint": endpoint, "data": data}
+        self.queue_file_lock.acquire()
         with open(self.queue_file, "a+") as queue_fp:
             queue_fp.write(json.dumps(entry) + "\n")
+        self.queue_file_lock.release()
 
     def _post_failed_requests(self):
         failed_requests = []
-        for bucket in os.listdir(self.failed_queues_dir):
-            with open(self.queue_file, "r") as queue_fp:
-                for request in queue_fp:
-                    failed_requests.append(json.loads(request))
-                if len(failed_requests) != 0:
-                    open(self.queue_file, "w").close()  # Clear file
-                    logger.info("Sending {} failed events: {}".format(len(failed_requests), failed_requests))
-                    for request in failed_requests:
-                        self._post(request['endpoint'], request['data'])
+        self.queue_file_lock.acquire()
+        with open(self.queue_file, "r") as queue_fp:
+            for request in queue_fp:
+                failed_requests.append(json.loads(request))
+            if len(failed_requests) != 0:
+                open(self.queue_file, "w").close()  # Clear file
+                logger.info("Sending {} failed events: {}".format(len(failed_requests), failed_requests))
+                for request in failed_requests:
+                    self._post(request['endpoint'], request['data'])
+        self.queue_file_lock.release()
 
     #
     #   Connection methods
