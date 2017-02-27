@@ -37,13 +37,6 @@ class ActivityWatchClient:
         self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
         self.server_port = config["server_port"] if not testing else config["testserver_port"]
 
-        # Setup failed queues file
-        self.data_dir = get_data_dir("aw-client")
-        self.failed_queues_dir = os.path.join(self.data_dir, "failed_events")
-        if not os.path.exists(self.failed_queues_dir):
-            os.makedirs(self.failed_queues_dir)
-        self.queue_file = os.path.join(self.failed_queues_dir, self.client_name)
-
         self.dispatch_thread = PostDispatchThread(self)
 
     #
@@ -135,38 +128,47 @@ QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 
 class PostDispatchThread(threading.Thread):
     def __init__(self, client):
-        threading.Thread.__init__(self)
-        self.daemon = True
+        threading.Thread.__init__(self, daemon=True)
         self.running = True
         self.connected = False
+
         self.client = client
         self.queue = Queue()
+
+        # Setup failed queues file
+        data_dir = get_data_dir("aw-client")
+        failed_queues_dir = os.path.join(data_dir, "failed_events")
+        if not os.path.exists(failed_queues_dir):
+            os.makedirs(failed_queues_dir)
+        self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
+
         self._load_queue()
+        logger.info("Loaded {} failed events from file".format(self.queue.qsize()))
 
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
-        entry = {"endpoint": endpoint, "data": data}
-        with open(self.client.queue_file, "a+") as queue_fp:
+        entry = QueuedRequest(endpoint=endpoint, data=data)
+        with open(self.queue_file, "a+") as queue_fp:
             queue_fp.write(json.dumps(entry) + "\n")
 
     def _load_queue(self):
         # If crash when lost connection, queue failed requests
         failed_requests = [] # type: List[QueuedRequests]
-        open(self.client.queue_file, "a").close()  # Create file if doesn't exist
-        with open(self.client.queue_file, "r") as queue_fp:
+        open(self.queue_file, "a").close()  # Create file if doesn't exist
+        with open(self.queue_file, "r") as queue_fp:
             for request in queue_fp:
+                logger.debug(request)
                 failed_requests.append(QueuedRequest(*json.loads(request)))
 
-        open(self.client.queue_file, "w").close()  # Clear file
+        open(self.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
             logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
             for request in failed_requests:
-                print(request)
                 self.queue.put(request)
 
     def _save_queue(self):
         # When lost connection, save queue to file for later sending
-        with open(self.client.queue_file, "w") as queue_fp:
+        with open(self.queue_file, "w") as queue_fp:
             for request in self.queue.queue:
                 queue_fp.write(json.dumps(request) + "\n")
 
@@ -188,7 +190,7 @@ class PostDispatchThread(threading.Thread):
                 except req.RequestException as e:
                     self.queue.queue.appendleft(request)
                     self.connected = False
-                    logger.warning("Can't connect to aw-server, will queue events until connection is available")
+                    logger.warning("Can't connect to aw-server, will queue events until connection is available: {}".format(e))
             self._save_queue()
 
     def add_request(self, endpoint, data):
