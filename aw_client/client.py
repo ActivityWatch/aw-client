@@ -87,6 +87,11 @@ class ActivityWatchClient:
         data = event.to_json_dict()
         self.dispatch_thread.add_request(endpoint, data)
 
+    def heartbeat(self, bucket, event: Event, pulsetime: float):
+        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
+        data = event.to_json_dict()
+        self.dispatch_thread.add_request(endpoint, data)
+
     #
     #   Bucket get/post requests
     #
