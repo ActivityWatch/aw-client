@@ -41,7 +41,6 @@ def generate_config():
         for key in user_config:
             new_config[key] = user_config[key]
 
+    logger.info("Configuration used: {}".format(new_config))
     return new_config
 
-config = generate_config()
-logger.info("Configuration used: {}".format(config))

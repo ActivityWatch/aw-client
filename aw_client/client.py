@@ -5,6 +5,7 @@ import appdirs
 import os
 import time
 import threading
+from collections import namedtuple
 from typing import Optional, List, Union
 from queue import Queue
 
@@ -12,7 +13,9 @@ import requests as req
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
-from . import config
+from .generate_config import generate_config
+
+config = generate_config()
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -22,11 +25,11 @@ logger = logging.getLogger("aw.client")
 # TODO: Should probably use OAuth or something
 
 class ActivityWatchClient:
-    def __init__(self, client_name: str, testing=False):
+    def __init__(self, client_name: str, testing=False) -> None:
         self.testing = testing
 
-        self.buckets = []
-        self.session = {}
+        self.buckets = []  # type: List[Dict[str, str]]
+        # self.session = {}
 
         self.client_name = client_name + ("-testing" if testing else "")
         self.client_hostname = socket.gethostname()
@@ -64,22 +67,22 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket) -> List[Event]:
+    def get_events(self, bucket: str) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket)
         events = self._get(endpoint).json()
         return [Event(**event) for event in events]
 
-    def send_event(self, bucket, event: Event):
+    def send_event(self, bucket: str, event: Event):
         endpoint = "buckets/{}/events".format(bucket)
         data = event.to_json_dict()
         self.dispatch_thread.add_request(endpoint, data)
 
-    def send_events(self, bucket, events: List[Event], ignore_failed=False):
+    def send_events(self, bucket: str, events: List[Event], ignore_failed=False):
         endpoint = "buckets/{}/events".format(bucket)
         data = [event.to_json_dict() for event in events]
         self.dispatch_thread.add_request(endpoint, data)
 
-    def replace_last_event(self, bucket, event: Event):
+    def replace_last_event(self, bucket: str, event: Event):
         endpoint = "buckets/{}/events/replace_last".format(bucket)
         data = event.to_json_dict()
         self.dispatch_thread.add_request(endpoint, data)
@@ -91,7 +94,7 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets').json()
 
-    def setup_bucket(self, bucket_id, event_type: str) -> bool:
+    def setup_bucket(self, bucket_id: str, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
 
     def _create_buckets(self):
@@ -123,6 +126,7 @@ class ActivityWatchClient:
         # FIXME: doesn't disconnect immediately
         self.dispatch_thread.running = False
 
+QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 
 class PostDispatchThread(threading.Thread):
     def __init__(self, client):
@@ -142,16 +146,18 @@ class PostDispatchThread(threading.Thread):
 
     def _load_queue(self):
         # If crash when lost connection, queue failed requests
-        failed_requests = []
+        failed_requests = [] # type: List[QueuedRequests]
         open(self.client.queue_file, "a").close()  # Create file if doesn't exist
         with open(self.client.queue_file, "r") as queue_fp:
             for request in queue_fp:
-                failed_requests.append(json.loads(request))
+                failed_requests.append(QueuedRequest(*json.loads(request)))
+
         open(self.client.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
             logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
             for request in failed_requests:
-                self.queue.put([request['endpoint'], request['data']])
+                print(request)
+                self.queue.put(request)
 
     def _save_queue(self):
         # When lost connection, save queue to file for later sending
@@ -173,7 +179,7 @@ class PostDispatchThread(threading.Thread):
             while self.connected and self.running:
                 request = self.queue.get()
                 try:
-                    self.client._post(*request)
+                    self.client._post(request.endpoint, request.data)
                 except req.RequestException as e:
                     self.queue.queue.appendleft(request)
                     self.connected = False
@@ -182,6 +188,6 @@ class PostDispatchThread(threading.Thread):
 
     def add_request(self, endpoint, data):
         if self.connected:
-            self.queue.put([endpoint, data])
+            self.queue.put(QueuedRequest(endpoint=endpoint, data=data))
         else:
             self._queue_failed_request(endpoint, data)
