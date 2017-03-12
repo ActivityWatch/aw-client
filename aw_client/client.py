@@ -12,7 +12,7 @@ import requests as req
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
-from . import config
+from .config import client_config
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -31,8 +31,9 @@ class ActivityWatchClient:
         self.client_name = client_name + ("-testing" if testing else "")
         self.client_hostname = socket.gethostname()
 
-        self.server_hostname = config["server_hostname"] if not testing else config["testserver_hostname"]
-        self.server_port = config["server_port"] if not testing else config["testserver_port"]
+        configsection = "server" if not testing else "server-testing"
+        self.server_hostname = client_config[configsection]["hostname"]
+        self.server_port = client_config[configsection]["port"]
 
         # Setup failed queues file
         self.data_dir = get_data_dir("aw-client")
