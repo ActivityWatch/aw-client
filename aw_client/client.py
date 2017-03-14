@@ -23,6 +23,7 @@ logger = logging.getLogger("aw.client")
 
 class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False):
+        logger.setLevel(logging.DEBUG if testing else logging.INFO)
         self.testing = testing
 
         self.buckets = []
@@ -34,6 +35,7 @@ class ActivityWatchClient:
         configsection = "server" if not testing else "server-testing"
         self.server_hostname = client_config[configsection]["hostname"]
         self.server_port = client_config[configsection]["port"]
+        logger.info("aw-client server destination set to {}:{}".format(self.server_hostname, self.server_port))
 
         # Setup failed queues file
         self.data_dir = get_data_dir("aw-client")
@@ -105,7 +107,7 @@ class ActivityWatchClient:
         buckets = self.get_buckets()
         for bucket in self.buckets:
             if bucket['bid'] in buckets:
-                return False  # Don't do anything if bucket already exists
+                return True  # Don't do anything if bucket already exists
             else:
                 # Create bucket
                 endpoint = "buckets/{}".format(bucket['bid'])
@@ -114,8 +116,8 @@ class ActivityWatchClient:
                     'hostname': self.client_hostname,
                     'type': bucket['etype'],
                 }
-                self._post(endpoint, data)
-                return True
+                response = self._post(endpoint, data)
+                return response.ok
 
     #
     #   Connection methods
@@ -168,13 +170,14 @@ class PostDispatchThread(threading.Thread):
     def run(self):
         while self.running:
             while not self.connected and self.running:
-                try: # Try to connect
-                    self.client._create_buckets()
-                    self.connected = True
-                    logger.warning("Connection to aw-server established")
+                try: # Try to connect, else retry in 60s
+                    if self.client._create_buckets():
+                        self.connected = True
+                    else:
+                        time.sleep(60)
                 except req.RequestException as e:
-                    # If unable to connect, retry in 10s
-                    time.sleep(40)
+                    time.sleep(60)
+            logger.info("Connection to aw-server established")
             self._load_queue()
             while self.connected and self.running:
                 request = self.queue.get()
