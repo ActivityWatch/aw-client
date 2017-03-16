@@ -35,7 +35,7 @@ class ActivityWatchClient:
         configsection = "server" if not testing else "server-testing"
         self.server_hostname = client_config[configsection]["hostname"]
         self.server_port = client_config[configsection]["port"]
-        logger.info("aw-client server destination set to {}:{}".format(self.server_hostname, self.server_port))
+        logger.info("aw-server destination set to {}:{}".format(self.server_hostname, self.server_port))
 
         # Setup failed queues file
         self.data_dir = get_data_dir("aw-client")
@@ -74,11 +74,14 @@ class ActivityWatchClient:
 
     def send_event(self, bucket, event: Event):
         endpoint = "buckets/{}/events".format(bucket)
-        data = event.to_json_dict()
+        data = [event.to_json_dict()]
         self.dispatch_thread.add_request(endpoint, data)
 
     def send_events(self, bucket, events: List[Event], ignore_failed=False):
         endpoint = "buckets/{}/events".format(bucket)
+        if len(events) <= 0:
+            logger.warning("Aborting sending empty list of events")
+            return
         data = [event.to_json_dict() for event in events]
         self.dispatch_thread.add_request(endpoint, data)
 
@@ -93,11 +96,17 @@ class ActivityWatchClient:
         self.dispatch_thread.add_request(endpoint, data)
 
     #
-    #   Bucket get/post requests
+    #   Bucket get/create/delete requests
     #
 
     def get_buckets(self):
         return self._get('buckets').json()
+
+    def delete_bucket(self, bucket):
+        if not self.testing:
+            logger.error("Cannot delete bucket when client and/or server isn't running in testing mode!")
+        else:
+            return self._get("buckets/{}/delete".format(bucket))
 
     def setup_bucket(self, bucket_id, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
@@ -105,10 +114,9 @@ class ActivityWatchClient:
     def _create_buckets(self):
         # Check if bucket exists
         buckets = self.get_buckets()
+        success = True
         for bucket in self.buckets:
-            if bucket['bid'] in buckets:
-                return True  # Don't do anything if bucket already exists
-            else:
+            if bucket['bid'] not in buckets:
                 # Create bucket
                 endpoint = "buckets/{}".format(bucket['bid'])
                 data = {
@@ -117,7 +125,9 @@ class ActivityWatchClient:
                     'type': bucket['etype'],
                 }
                 response = self._post(endpoint, data)
-                return response.ok
+                if not response.ok:
+                    success = False
+        return success
 
     #
     #   Connection methods
@@ -159,7 +169,7 @@ class PostDispatchThread(threading.Thread):
         if len(failed_requests) > 0:
             logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
             for request in failed_requests:
-                self.queue.put([request['endpoint'], request['data']])
+                self.queue.put([request[0], request[1]])
 
     def _save_queue(self):
         # When lost connection, save queue to file for later sending
@@ -174,9 +184,9 @@ class PostDispatchThread(threading.Thread):
                     if self.client._create_buckets():
                         self.connected = True
                     else:
-                        time.sleep(60)
+                        time.sleep(20)
                 except req.RequestException as e:
-                    time.sleep(60)
+                    time.sleep(20)
             logger.info("Connection to aw-server established")
             self._load_queue()
             while self.connected and self.running:
