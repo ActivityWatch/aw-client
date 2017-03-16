@@ -154,7 +154,7 @@ class PostDispatchThread(threading.Thread):
 
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
-        entry = {"endpoint": endpoint, "data": data}
+        entry = [endpoint, data]
         with open(self.client.queue_file, "a+") as queue_fp:
             queue_fp.write(json.dumps(entry) + "\n")
 
