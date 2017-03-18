@@ -167,7 +167,7 @@ class PostDispatchThread(threading.Thread):
                 failed_requests.append(json.loads(request))
         open(self.client.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
-            logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
+            logger.info("Preparing to send {} failed events from the failqueue".format(len(failed_requests)))
             for request in failed_requests:
                 self.queue.put([request[0], request[1]])
 
@@ -188,7 +188,7 @@ class PostDispatchThread(threading.Thread):
                 except req.RequestException as e:
                     time.sleep(20)
             logger.info("Connection to aw-server established")
-            self._load_queue()
+            self._load_queue() # Race condition since self.connected=True was set before, new events might get priority over older events from the file queue
             while self.connected and self.running:
                 request = self.queue.get()
                 try:
