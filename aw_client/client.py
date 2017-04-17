@@ -159,9 +159,6 @@ class PostDispatchThread(threading.Thread):
             os.makedirs(failed_queues_dir)
         self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
 
-        self._load_queue()
-        logger.debug("Loaded {} failed requests from queuefile".format(self._queue.qsize()))
-
     def _queue_to_file(self, endpoint: str, data: dict):
         entry = QueuedRequest(endpoint=endpoint, data=data)
         with open(self.queue_file, "a+") as queue_fp:
