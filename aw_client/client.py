@@ -103,8 +103,13 @@ class ActivityWatchClient:
     def delete_bucket(self, bucket):
         if not self.testing:
             logger.error("Cannot delete bucket when client and/or server isn't running in testing mode!")
-        else:
-            return self._get("buckets/{}/delete".format(bucket))
+            return False
+        try:
+            response = self._get("buckets/{}/delete".format(bucket))
+            return response.ok
+        except req.RequestException as e:
+            logger.error(e)
+            return False
 
     def setup_bucket(self, bucket_id: str, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
