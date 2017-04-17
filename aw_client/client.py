@@ -1,12 +1,11 @@
 import json
 import logging
 import socket
-import appdirs
 import os
 import time
 import threading
 from collections import namedtuple
-from typing import Optional, List, Union
+from typing import Optional, List
 from queue import Queue
 
 import requests as req
@@ -129,6 +128,7 @@ class ActivityWatchClient:
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 
+
 class PostDispatchThread(threading.Thread):
     def __init__(self, client):
         threading.Thread.__init__(self, daemon=True)
@@ -146,7 +146,7 @@ class PostDispatchThread(threading.Thread):
         self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
 
         self._load_queue()
-        logger.info("Loaded {} failed events from file".format(self.queue.qsize()))
+        logger.info("Loaded {} failed events from queue file".format(self.queue.qsize()))
 
     def _queue_failed_request(self, endpoint: str, data: dict):
         # Find failed queue file
@@ -156,7 +156,7 @@ class PostDispatchThread(threading.Thread):
 
     def _load_queue(self):
         # If crash when lost connection, queue failed requests
-        failed_requests = [] # type: List[QueuedRequests]
+        failed_requests = []  # type: List[QueuedRequests]
         open(self.queue_file, "a").close()  # Create file if doesn't exist
         with open(self.queue_file, "r") as queue_fp:
             for request in queue_fp:
@@ -178,7 +178,7 @@ class PostDispatchThread(threading.Thread):
     def run(self):
         while self.running:
             while not self.connected and self.running:
-                try: # Try to connect
+                try:  # Try to connect
                     self.client._create_buckets()
                     self.connected = True
                     logger.warning("Connection to aw-server established")
