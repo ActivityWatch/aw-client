@@ -4,6 +4,7 @@ import socket
 import os
 import time
 import threading
+import functools
 from collections import namedtuple
 from typing import Optional, List
 from queue import Queue
@@ -129,6 +130,19 @@ class ActivityWatchClient:
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 
 
+def RestartOnException(f):
+    @functools.wraps(f)
+    def g(*args, **kwargs):
+        while True:
+            try:
+                f(*args, **kwargs)
+            except Exception as e:
+                logger.error("{} crashed due to exception, restarting.".format(f))
+                logger.error(e)
+                time.sleep(1)  # To prevent extremely fast restarts in case of bad state.
+    return g
+
+
 class PostDispatchThread(threading.Thread):
     def __init__(self, client):
         threading.Thread.__init__(self, daemon=True)
@@ -136,20 +150,19 @@ class PostDispatchThread(threading.Thread):
         self.connected = False
 
         self.client = client
-        self.queue = Queue()
+        self._queue = Queue()
 
         # Setup failed queues file
         data_dir = get_data_dir("aw-client")
-        failed_queues_dir = os.path.join(data_dir, "failed_events")
+        failed_queues_dir = os.path.join(data_dir, "failed_requests")
         if not os.path.exists(failed_queues_dir):
             os.makedirs(failed_queues_dir)
         self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
 
         self._load_queue()
-        logger.info("Loaded {} failed events from queue file".format(self.queue.qsize()))
+        logger.debug("Loaded {} failed requests from queuefile".format(self._queue.qsize()))
 
-    def _queue_failed_request(self, endpoint: str, data: dict):
-        # Find failed queue file
+    def _queue_to_file(self, endpoint: str, data: dict):
         entry = QueuedRequest(endpoint=endpoint, data=data)
         with open(self.queue_file, "a+") as queue_fp:
             queue_fp.write(json.dumps(entry) + "\n")
@@ -157,47 +170,67 @@ class PostDispatchThread(threading.Thread):
     def _load_queue(self):
         # If crash when lost connection, queue failed requests
         failed_requests = []  # type: List[QueuedRequests]
+
+        # Load failed events from queue into failed_requests
         open(self.queue_file, "a").close()  # Create file if doesn't exist
         with open(self.queue_file, "r") as queue_fp:
             for request in queue_fp:
                 logger.debug(request)
                 failed_requests.append(QueuedRequest(*json.loads(request)))
 
+        # Insert failed_requests into dispatching queue
         open(self.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
-            logger.info("Adding {} failed events to queue to send".format(len(failed_requests)))
             for request in failed_requests:
-                self.queue.put(request)
+                self._queue.put(request)
+            logger.info("Loaded {} failed requests from queuefile".format(len(failed_requests)))
 
     def _save_queue(self):
         # When lost connection, save queue to file for later sending
         with open(self.queue_file, "w") as queue_fp:
-            for request in self.queue.queue:
-                queue_fp.write(json.dumps(request) + "\n")
+            while not self._queue.empty():
+                # The `block=False` and `if request is not None` stuff here is actually required, see Python docs.
+                request = self._queue.get(block=False)
+                if request is not None:
+                    queue_fp.write(json.dumps(request) + "\n")
 
+    def _try_connect(self) -> bool:
+        try:  # Try to connect
+            self.client._create_buckets()
+            return True
+        except req.RequestException:
+            return False
+
+    @RestartOnException
     def run(self):
         while self.running:
+            # Connect
             while not self.connected and self.running:
-                try:  # Try to connect
-                    self.client._create_buckets()
-                    self.connected = True
-                    logger.warning("Connection to aw-server established")
-                except req.RequestException as e:
-                    # If unable to connect, retry in 10s
-                    time.sleep(40)
+                self.connected = self._try_connect()
+                if self.connected:
+                    logger.info("Connection to aw-server established")
+                else:
+                    time.sleep(10)
+
+            # Load requests from queuefile
             self._load_queue()
+
+            # Dispatch requests to server
             while self.connected and self.running:
-                request = self.queue.get()
+                request = self._queue.get()
                 try:
                     self.client._post(request.endpoint, request.data)
                 except req.RequestException as e:
-                    self.queue.queue.appendleft(request)
+                    self._queue.queue.appendleft(request)
                     self.connected = False
-                    logger.warning("Can't connect to aw-server, will queue events until connection is available: {}".format(e))
+                    logger.warning("Can't connect to aw-server, will queue events until connection is available.")
+                    logger.warning(e)
+
+            # Disconnected or self.running set to false, save remaining to queuefile
             self._save_queue()
 
     def add_request(self, endpoint, data):
         if self.connected:
-            self.queue.put(QueuedRequest(endpoint=endpoint, data=data))
+            self._queue.put(QueuedRequest(endpoint=endpoint, data=data))
         else:
-            self._queue_failed_request(endpoint, data)
+            self._queue_to_file(endpoint, data)
