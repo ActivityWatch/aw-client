@@ -1,7 +1,7 @@
 from configparser import ConfigParser
 
 from aw_core import dirs
-from aw_core.config import load_config
+import aw_core.config
 
 default_client_config = ConfigParser()
 default_client_config["server"] = {
@@ -13,4 +13,6 @@ default_client_config["server-testing"] = {
     "port": 5666
 }
 
-client_config = load_config("aw-client", default_client_config)
+
+def load_config():
+    return aw_core.config.load_config("aw-client", default_client_config)

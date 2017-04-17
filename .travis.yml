@@ -1,13 +1,17 @@
 
 language: python
 python:
-# - "3.3"
-# - "3.4"
  - "3.5"
- - "nightly" # currently points to 3.6-dev
+ - "3.6"
+ - "nightly"
+
+before_install:
+ - "pip install mypy"
 
 install:
  - "python3 setup.py install"
 
 script:
  - "python3 -c 'import aw_client'"
+ - "mypy aw_client; echo 'Not a failing step'"
+
