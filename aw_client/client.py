@@ -171,8 +171,6 @@ class PostDispatchThread(threading.Thread):
             os.makedirs(failed_queues_dir)
         self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
 
-        self._load_queue()
-        logger.debug("Loaded {} failed requests from queuefile".format(self._queue.qsize()))
 
     def _queue_to_file(self, endpoint: str, data: dict):
         entry = QueuedRequest(endpoint=endpoint, data=data)
@@ -187,7 +185,6 @@ class PostDispatchThread(threading.Thread):
         open(self.queue_file, "a").close()  # Create file if doesn't exist
         with open(self.queue_file, "r") as queue_fp:
             for request in queue_fp:
-                logger.debug(request)
                 failed_requests.append(QueuedRequest(*json.loads(request)))
 
         # Insert failed_requests into dispatching queue
@@ -208,8 +205,7 @@ class PostDispatchThread(threading.Thread):
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
-            self.client._create_buckets()
-            return True
+            return self.client._create_buckets()
         except req.RequestException:
             return False
 
