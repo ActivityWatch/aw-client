@@ -5,6 +5,7 @@ import os
 import time
 import threading
 import functools
+from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List
 from queue import Queue
@@ -63,8 +64,18 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket: str) -> List[Event]:
+    def get_events(self, bucket: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket)
+
+        params = []
+        if limit:
+            params += "limit={}".format(limit)
+        if start:
+            params += "start={}".format(start.isoformat())
+        if end:
+            params += "end={}".format(end.isoformat())
+        endpoint += "?" + "&".join(params) if params else ""
+
         events = self._get(endpoint).json()
         return [Event(**event) for event in events]
 
