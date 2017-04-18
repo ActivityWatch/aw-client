@@ -4,7 +4,6 @@ import socket
 import os
 import time
 import threading
-import functools
 from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List
@@ -14,6 +13,7 @@ import requests as req
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
+from aw_core.decorators import deprecated, restart_on_exception
 
 from .config import load_config
 
@@ -60,6 +60,11 @@ class ActivityWatchClient:
         response.raise_for_status()
         return response
 
+    def get_info(self):
+        """Returns a dict currently containing the keys 'hostname' and 'testing'."""
+        endpoint = "info/"
+        return self._get(endpoint).json()
+
     #
     #   Event get/post requests
     #
@@ -89,6 +94,7 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self.dispatch_thread.add_request(endpoint, data)
 
+    @deprecated
     def replace_last_event(self, bucket: str, event: Event):
         endpoint = "buckets/{}/events/replace_last".format(bucket)
         data = event.to_json_dict()
@@ -139,19 +145,6 @@ class ActivityWatchClient:
         self.dispatch_thread.running = False
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
-
-
-def RestartOnException(f):
-    @functools.wraps(f)
-    def g(*args, **kwargs):
-        while True:
-            try:
-                f(*args, **kwargs)
-            except Exception as e:
-                logger.error("{} crashed due to exception, restarting.".format(f))
-                logger.error(e)
-                time.sleep(1)  # To prevent extremely fast restarts in case of bad state.
-    return g
 
 
 class PostDispatchThread(threading.Thread):
@@ -209,7 +202,7 @@ class PostDispatchThread(threading.Thread):
         except req.RequestException:
             return False
 
-    @RestartOnException
+    @restart_on_exception
     def run(self):
         while self.running:
             # Connect
