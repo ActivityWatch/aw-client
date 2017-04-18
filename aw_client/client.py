@@ -104,7 +104,7 @@ class ActivityWatchClient:
     #
 
     def get_buckets(self):
-        return self._get('buckets').json()
+        return self._get('buckets/').json()
 
     def setup_bucket(self, bucket_id: str, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
