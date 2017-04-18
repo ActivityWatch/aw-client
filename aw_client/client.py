@@ -60,6 +60,11 @@ class ActivityWatchClient:
         response.raise_for_status()
         return response
 
+    def get_info(self):
+        """Returns a dict currently containing the keys 'hostname' and 'testing'."""
+        endpoint = "info/"
+        return self._get(endpoint).json()
+
     #
     #   Event get/post requests
     #
