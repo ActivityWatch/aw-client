@@ -9,7 +9,7 @@ before_install:
  - "pip install mypy"
 
 install:
- - "python3 setup.py install"
+ - "make build"
 
 script:
  - "python3 -c 'import aw_client'"
