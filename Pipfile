@@ -1,0 +1,10 @@
+[[source]]
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+
+[dev-packages]
+pytest = "*"
+mypy = "*"
+
+[packages]
+aw_core = { git = 'git@github.com:ActivityWatch/aw-core.git', ref = 'v0.3.0', editable = 'true' }

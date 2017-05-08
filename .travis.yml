@@ -6,7 +6,8 @@ python:
  - "nightly"
 
 before_install:
- - "pip install mypy"
+ - "pip install mypy pipenv"
+ - "pipenv install --dev"
 
 install:
  - "make build"

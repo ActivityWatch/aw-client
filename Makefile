@@ -1,4 +1,10 @@
-.PHONY: build
+.PHONY: build test typecheck
 
 build:
-	python3 setup.py install
+	pipenv install
+
+test:
+	make typecheck
+
+typecheck:
+	mypy aw_client --ignore-missing-imports
