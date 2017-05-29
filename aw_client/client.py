@@ -13,7 +13,7 @@ import requests as req
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
-from aw_core.decorators import deprecated, restart_on_exception
+from aw_core.decorators import deprecated
 
 from .config import load_config
 
@@ -22,8 +22,6 @@ from .config import load_config
 logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger("aw.client")
 
-
-# TODO: Should probably use OAuth or something
 
 class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False) -> None:
@@ -72,7 +70,7 @@ class ActivityWatchClient:
     def get_events(self, bucket: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket)
 
-        params = []
+        params = []  # type: List[str]
         if limit:
             params += "limit={}".format(limit)
         if start:
@@ -144,14 +142,18 @@ class ActivityWatchClient:
         # FIXME: doesn't disconnect immediately
         self.dispatch_thread.running = False
 
+
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 
 
 class PostDispatchThread(threading.Thread):
-    def __init__(self, client):
+    def __init__(self, client, dispatch_interval=0):
         threading.Thread.__init__(self, daemon=True)
         self.running = True
         self.connected = False
+
+        # Time to wait between dispatching events, useful for throttling.
+        self.dispatch_interval = dispatch_interval
 
         self.client = client
         self._queue = Queue()
@@ -177,7 +179,12 @@ class PostDispatchThread(threading.Thread):
         with open(self.queue_file, "r") as queue_fp:
             for request in queue_fp:
                 logger.debug(request)
-                failed_requests.append(QueuedRequest(*json.loads(request)))
+                try:
+                    failed_requests.append(QueuedRequest(*json.loads(request)))
+                except json.decoder.JSONDecodeError as e:
+                    logger.error(e, exc_info=True)
+                    logger.error("Request that failed: {}".format(request))
+                    logger.warning("Skipping request that failed to load")
 
         # Insert failed_requests into dispatching queue
         open(self.queue_file, "w").close()  # Clear file
@@ -202,7 +209,13 @@ class PostDispatchThread(threading.Thread):
         except req.RequestException:
             return False
 
-    @restart_on_exception
+    # TODO: Handle SIGTERM/keyboard interrupt gracefully by saving to file first
+    # FIXME: Turns out this is a really bad idea, it's probably better if the
+    # entire program crashes should this thread crash. That way we can at least
+    # detect errors by detecting crashes in aw-qt. I just lost a day of data due
+    # to this, caused by "no space left on device" that corrupted the file.
+    # Bad state should be handled with precision, not with shit like this.
+    # @restart_on_exception
     def run(self):
         while self.running:
             # Connect
@@ -218,14 +231,16 @@ class PostDispatchThread(threading.Thread):
 
             # Dispatch requests to server
             while self.connected and self.running:
+                time.sleep(self.dispatch_interval)
                 request = self._queue.get()
                 try:
                     self.client._post(request.endpoint, request.data)
                 except req.RequestException as e:
                     self._queue.queue.appendleft(request)
                     self.connected = False
-                    logger.warning("Can't connect to aw-server, will queue events until connection is available.")
+                    logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
                     logger.warning(e)
+                    time.sleep(1)
 
             # Disconnected or self.running set to false, save remaining to queuefile
             self._save_queue()
