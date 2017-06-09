@@ -6,7 +6,7 @@ import time
 import threading
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List
+from typing import Optional, List, Any
 from queue import Queue
 
 import requests as req
@@ -45,16 +45,23 @@ class ActivityWatchClient:
     #   Get/Post base requests
     #
 
-    def _post(self, endpoint: str, data: dict) -> Optional[req.Response]:
-        headers = {"Content-type": "application/json"}
-        url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
-        response = req.post(url, data=json.dumps(data), headers=headers)
+    def _url(self, endpoint: str):
+        return "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
+
+    def _get(self, endpoint: str) -> Optional[req.Response]:
+        response = req.get(self._url(endpoint))
         response.raise_for_status()
         return response
 
-    def _get(self, endpoint: str) -> Optional[req.Response]:
-        url = "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
-        response = req.get(url)
+    def _post(self, endpoint: str, data: Any) -> Optional[req.Response]:
+        headers = {"Content-type": "application/json"}
+        response = req.post(self._url(endpoint), data=json.dumps(data), headers=headers)
+        response.raise_for_status()
+        return response
+
+    def _delete(self, endpoint: str, data: Any = {}) -> Optional[req.Response]:
+        headers = {"Content-type": "application/json"}
+        response = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
         response.raise_for_status()
         return response
 
@@ -77,27 +84,30 @@ class ActivityWatchClient:
             params += "start={}".format(start.isoformat())
         if end:
             params += "end={}".format(end.isoformat())
-        endpoint += "?" + "&".join(params) if params else ""
+        endpoint += ("?" + "&".join(params)) if params else ""
 
         events = self._get(endpoint).json()
+        print(events)
         return [Event(**event) for event in events]
 
     def send_event(self, bucket: str, event: Event):
         endpoint = "buckets/{}/events".format(bucket)
         data = event.to_json_dict()
-        self.dispatch_thread.add_request(endpoint, data)
+        return self._post(endpoint, data)
 
-    def send_events(self, bucket: str, events: List[Event], ignore_failed=False):
+    def send_events(self, bucket: str, events: List[Event]):
         endpoint = "buckets/{}/events".format(bucket)
         data = [event.to_json_dict() for event in events]
-        self.dispatch_thread.add_request(endpoint, data)
+        return self._post(endpoint, data)
 
+    # NOTE: Queued
     @deprecated
     def replace_last_event(self, bucket: str, event: Event):
         endpoint = "buckets/{}/events/replace_last".format(bucket)
         data = event.to_json_dict()
         self.dispatch_thread.add_request(endpoint, data)
 
+    # NOTE: Queued
     def heartbeat(self, bucket, event: Event, pulsetime: float):
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
         data = event.to_json_dict()
@@ -110,6 +120,18 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets/').json()
 
+    def create_bucket(self, bucket_id: str, event_type: str):
+        endpoint = "buckets/{}".format(bucket_id)
+        data = {
+            'client': self.client_name,
+            'hostname': self.client_hostname,
+            'type': event_type,
+        }
+        self._post(endpoint, data)
+
+    def delete_bucket(self, bucket_id: str):
+        self._delete('buckets/{}'.format(bucket_id))
+
     def setup_bucket(self, bucket_id: str, event_type: str) -> bool:
         self.buckets.append({"bid": bucket_id, "etype": event_type})
 
@@ -120,14 +142,7 @@ class ActivityWatchClient:
             if bucket['bid'] in buckets:
                 return False  # Don't do anything if bucket already exists
             else:
-                # Create bucket
-                endpoint = "buckets/{}".format(bucket['bid'])
-                data = {
-                    'client': self.client_name,
-                    'hostname': self.client_hostname,
-                    'type': bucket['etype'],
-                }
-                self._post(endpoint, data)
+                self.create_bucket(bucket['bid'], bucket['etype'])
                 return True
 
     #
@@ -187,6 +202,7 @@ class PostDispatchThread(threading.Thread):
                     logger.warning("Skipping request that failed to load")
 
         # Insert failed_requests into dispatching queue
+        # FIXME: We really shouldn't be clearing the file here until the events have been sent to server.
         open(self.queue_file, "w").close()  # Clear file
         if len(failed_requests) > 0:
             for request in failed_requests:
