@@ -20,7 +20,7 @@ from .config import load_config
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
-logger = logging.getLogger("aw.client")
+logger = logging.getLogger(__name__)
 
 
 class ActivityWatchClient:
@@ -108,10 +108,13 @@ class ActivityWatchClient:
         self.dispatch_thread.add_request(endpoint, data)
 
     # NOTE: Queued
-    def heartbeat(self, bucket, event: Event, pulsetime: float):
+    def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False):
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
         data = event.to_json_dict()
-        self.dispatch_thread.add_request(endpoint, data)
+        if queued:
+            self.dispatch_thread.add_request(endpoint, data)
+        else:
+            self._post(endpoint, data)
 
     #
     #   Bucket get/post requests
@@ -132,7 +135,7 @@ class ActivityWatchClient:
     def delete_bucket(self, bucket_id: str):
         self._delete('buckets/{}'.format(bucket_id))
 
-    def setup_bucket(self, bucket_id: str, event_type: str) -> bool:
+    def setup_bucket(self, bucket_id: str, event_type: str):
         self.buckets.append({"bid": bucket_id, "etype": event_type})
 
     def _create_buckets(self):
