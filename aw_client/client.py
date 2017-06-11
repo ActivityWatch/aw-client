@@ -101,13 +101,6 @@ class ActivityWatchClient:
         return self._post(endpoint, data)
 
     # NOTE: Queued
-    @deprecated
-    def replace_last_event(self, bucket: str, event: Event):
-        endpoint = "buckets/{}/events/replace_last".format(bucket)
-        data = event.to_json_dict()
-        self.dispatch_thread.add_request(endpoint, data)
-
-    # NOTE: Queued
     def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False):
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
         data = event.to_json_dict()
