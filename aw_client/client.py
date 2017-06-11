@@ -48,8 +48,8 @@ class ActivityWatchClient:
     def _url(self, endpoint: str):
         return "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
 
-    def _get(self, endpoint: str) -> Optional[req.Response]:
-        response = req.get(self._url(endpoint))
+    def _get(self, endpoint: str, params=None) -> Optional[req.Response]:
+        response = req.get(self._url(endpoint), params=params)
         response.raise_for_status()
         return response
 
@@ -77,17 +77,15 @@ class ActivityWatchClient:
     def get_events(self, bucket: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket)
 
-        params = []  # type: List[str]
+        params = dict()  # type: Dict[str, str]
         if limit:
-            params += "limit={}".format(limit)
+            params["limit"] = str(limit)
         if start:
-            params += "start={}".format(start.isoformat())
+            params["start"] = start.isoformat()
         if end:
-            params += "end={}".format(end.isoformat())
-        endpoint += ("?" + "&".join(params)) if params else ""
+            params["end"] = end.isoformat()
 
-        events = self._get(endpoint).json()
-        print(events)
+        events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
 
     def send_event(self, bucket: str, event: Event):
