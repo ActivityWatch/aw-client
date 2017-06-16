@@ -98,14 +98,17 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         return self._post(endpoint, data)
 
-    # NOTE: Queued
-    def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False):
+    def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False) -> Optional[Event]:
+        """ This endpoint can use the failed requests retry queue.
+            This makes the request itself non-blocking and therefore
+            the function will in that case always returns None. """
+
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
         data = event.to_json_dict()
         if queued:
             self.dispatch_thread.add_request(endpoint, data)
         else:
-            self._post(endpoint, data)
+            return Event(**self._post(endpoint, data).json())
 
     #
     #   Bucket get/post requests
