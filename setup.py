@@ -16,4 +16,7 @@ setup(name='aw-client',
       ],
       dependency_links=[
           'https://github.com/ActivityWatch/aw-core/tarball/master#egg=aw-core'
+      ],
+      classifiers=[
+          'Programming Language :: Python :: 3'
       ])
