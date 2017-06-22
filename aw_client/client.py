@@ -27,13 +27,14 @@ logger = logging.getLogger(__name__)
 class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False) -> None:
         self.testing = testing
-        self.instance = SingleInstance(client_name)
 
         self.buckets = []  # type: List[Dict[str, str]]
         # self.session = {}
 
         self.client_name = client_name + ("-testing" if testing else "")
         self.client_hostname = socket.gethostname()
+
+        self.instance = SingleInstance(self.client_name)
 
         client_config = load_config()
         configsection = "server" if not testing else "server-testing"
