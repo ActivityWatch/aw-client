@@ -1,4 +1,2 @@
-from .config import load_config
-
-from .client import ActivityWatchClient
+from .client import ActivityWatchClient # noqa
 

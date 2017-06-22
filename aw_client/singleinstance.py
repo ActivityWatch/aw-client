@@ -1,10 +1,7 @@
 import sys
 import os
-import errno
-import tempfile
-import unittest
 import logging
-from multiprocessing import Process
+import fcntl
 
 from aw_core.dirs import get_data_dir
 
@@ -17,7 +14,6 @@ class SingleInstance:
         http://pythonhosted.org/tendo/_modules/tendo/singleton.html
     """
     def __init__(self, client_name):
-        global sys
         self.lockfile = os.path.join(get_data_dir("client_locks"), client_name)
         logger.debug("SingleInstance lockfile: " + self.lockfile)
         if sys.platform == 'win32':
@@ -33,7 +29,6 @@ class SingleInstance:
                 else:
                     raise e
         else: # non Windows
-            import fcntl, sys
             self.fp = open(self.lockfile, 'w')
             try:
                 fcntl.lockf(self.fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -42,7 +37,6 @@ class SingleInstance:
                 sys.exit(-1)
 
     def __del__(self):
-        global sys
         if sys.platform == 'win32':
             if hasattr(self, 'fd'):
                 os.close(self.fd)
