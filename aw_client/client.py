@@ -13,7 +13,6 @@ import requests as req
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
-from aw_core.decorators import deprecated
 
 from .config import load_config
 from .singleinstance import SingleInstance

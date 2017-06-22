@@ -1,6 +1,5 @@
 from configparser import ConfigParser
 
-from aw_core import dirs
 import aw_core.config
 
 default_client_config = ConfigParser()
