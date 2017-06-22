@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class ActivityWatchClient:
-    def __init__(self, client_name: str, testing=False) -> None:
+    def __init__(self, client_name: str, testing=False, server_host=None, server_port=None) -> None:
         self.testing = testing
 
         self.buckets = []  # type: List[Dict[str, str]]
@@ -33,13 +33,13 @@ class ActivityWatchClient:
         self.client_name = client_name + ("-testing" if testing else "")
         self.client_hostname = socket.gethostname()
 
-        self.instance = SingleInstance(self.client_name)
-
         client_config = load_config()
         configsection = "server" if not testing else "server-testing"
 
-        self.server_hostname = client_config[configsection]["hostname"]
-        self.server_port = client_config[configsection]["port"]
+        self.server_host = server_host if server_host != None else client_config[configsection]["hostname"]
+        self.server_port = server_port if server_port != None else client_config[configsection]["port"]
+
+        self.instance = SingleInstance("{}@{}:{}".format(self.client_name, self.server_host, self.server_port))
 
         self.dispatch_thread = PostDispatchThread(self)
 
@@ -48,7 +48,7 @@ class ActivityWatchClient:
     #
 
     def _url(self, endpoint: str):
-        return "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
+        return "http://{}:{}/api/0/{}".format(self.server_host, self.server_port, endpoint)
 
     def _get(self, endpoint: str, params=None) -> Optional[req.Response]:
         response = req.get(self._url(endpoint), params=params)
