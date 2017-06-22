@@ -16,6 +16,7 @@ from aw_core.dirs import get_data_dir
 from aw_core.decorators import deprecated
 
 from .config import load_config
+from .singleinstance import SingleInstance
 
 
 # FIXME: This line is probably badly placed
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 class ActivityWatchClient:
     def __init__(self, client_name: str, testing=False) -> None:
         self.testing = testing
+        self.instance = SingleInstance(client_name)
 
         self.buckets = []  # type: List[Dict[str, str]]
         # self.session = {}
