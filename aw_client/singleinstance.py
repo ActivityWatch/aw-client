@@ -3,7 +3,7 @@ import os
 import logging
 import fcntl
 
-from aw_core.dirs import get_data_dir
+from aw_core.dirs import get_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class SingleInstance:
         http://pythonhosted.org/tendo/_modules/tendo/singleton.html
     """
     def __init__(self, client_name):
-        self.lockfile = os.path.join(get_data_dir("client_locks"), client_name)
+        self.lockfile = os.path.join(get_cache_dir("client_locks"), client_name)
         logger.debug("SingleInstance lockfile: " + self.lockfile)
         if sys.platform == 'win32':
             try:
