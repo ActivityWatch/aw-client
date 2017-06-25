@@ -41,7 +41,6 @@ class ActivityWatchClient:
         self.server_host = "{hostname}:{port}".format(**server_config)
 
         self.request_queue = RequestQueue(self)
-        self.request_queue.start()
 
     #
     #   Get/Post base requests
@@ -138,16 +137,20 @@ class ActivityWatchClient:
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
 
-    @deprecated
+    def __enter__(self):
+        """Can be used with a `with`-statement as an alternative to manually calling connect and disconnect"""
+        self.connect()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
+
     def connect(self):
-        """No longer needed, thread now always starts when ActivityWatchClient is initialized"""
         if not self.request_queue.is_alive():
             self.request_queue.start()
 
-    @deprecated
     def disconnect(self):
-        """No longer needed, thread handles stopping itself on program exit using atexit"""
         self.request_queue.stop()
+        self.request_queue.join()
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
@@ -193,15 +196,15 @@ class RequestQueue(threading.Thread):
             os.makedirs(queued_dir)
         self.queue_file = os.path.join(queued_dir, self.client.name + ".v{}.json".format(self.VERSION))
 
-        # Ensures things are saves properly when watcher is stopped
+        # Ensures things are saved properly when clients quit
         atexit.register(lambda: self.stop())
 
     def _create_buckets(self):
         # Check if bucket exists
         buckets = self.client.get_buckets()
         for bucket in self._registered_buckets:
-            if bucket['bid'] not in buckets:
-                self.client.create_bucket(bucket['id'], bucket['type'])
+            if bucket.id not in buckets:
+                self.client.create_bucket(bucket.id, bucket.type)
 
     def _queue_to_file(self, endpoint: str, data: dict):
         entry = QueuedRequest(endpoint=endpoint, data=data)
@@ -244,10 +247,12 @@ class RequestQueue(threading.Thread):
     def _try_connect(self) -> bool:
         try:  # Try to connect
             self._create_buckets()
+            self.connected = True
             logger.info("Connection to aw-server established")
-            return True
         except req.RequestException:
-            return False
+            self.connected = False
+
+        return self.connected
 
     def wait(self, seconds) -> bool:
         return self._stop_event.wait(seconds)
@@ -259,7 +264,7 @@ class RequestQueue(threading.Thread):
         try:
             request = self._queue.get(block=False)
         except queue.Empty:
-            self.wait(1)
+            self.wait(0.1)
             return
 
         try:
