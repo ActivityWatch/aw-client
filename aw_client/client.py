@@ -141,13 +141,13 @@ class ActivityWatchClient:
     @deprecated
     def connect(self):
         """No longer needed, thread now always starts when ActivityWatchClient is initialized"""
-        if not self.request_thread.is_alive():
-            self.request_thread.start()
+        if not self.request_queue.is_alive():
+            self.request_queue.start()
 
     @deprecated
     def disconnect(self):
         """No longer needed, thread handles stopping itself on program exit using atexit"""
-        self.request_thread.stop()
+        self.request_queue.stop()
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
