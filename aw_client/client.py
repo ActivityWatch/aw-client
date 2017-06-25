@@ -41,6 +41,7 @@ class ActivityWatchClient:
         self.server_host = server_config["hostname"] + server_config["port"]
 
         self.request_queue = RequestQueue(self)
+        self.request_queue.start()
 
     #
     #   Get/Post base requests
@@ -137,15 +138,15 @@ class ActivityWatchClient:
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
 
-    #
-    #   Connection methods
-    #
-
+    @deprecated
     def connect(self):
+        """No longer needed, thread now always starts when ActivityWatchClient is initialized"""
         if not self.request_thread.is_alive():
             self.request_thread.start()
 
+    @deprecated
     def disconnect(self):
+        """No longer needed, thread handles stopping itself on program exit using atexit"""
         self.request_thread.stop()
 
 
