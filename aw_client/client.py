@@ -281,7 +281,7 @@ class RequestQueue(threading.Thread):
             # Load requests from queuefile
             self._load_queue()
 
-            # Dispatch requests until connection is lost or self.running is set to False
+            # Dispatch requests until connection is lost or thread should stop
             while self.connected and not self.should_stop():
                 self._dispatch_request()
 
