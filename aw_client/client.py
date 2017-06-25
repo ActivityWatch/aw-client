@@ -38,7 +38,7 @@ class ActivityWatchClient:
         config = load_config()
 
         server_config = config["server" if not testing else "server-testing"]
-        self.server_host = server_config["hostname"] + server_config["port"]
+        self.server_host = "{hostname}:{port}".format(**server_config)
 
         self.request_queue = RequestQueue(self)
         self.request_queue.start()
