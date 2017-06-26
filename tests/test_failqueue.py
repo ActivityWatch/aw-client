@@ -9,7 +9,7 @@ from aw_client import ActivityWatchClient
 
 
 def create_unique_event():
-    return Event(label=str(random()), timestamp=datetime.now(timezone.utc), duration=timedelta())
+    return Event(data={"label":str(random())}, timestamp=datetime.now(timezone.utc), duration=timedelta())
 
 
 if __name__ == "__main__":
@@ -24,16 +24,16 @@ if __name__ == "__main__":
     e1 = create_unique_event()
     e2 = create_unique_event()
     e3 = create_unique_event()
-    client1.heartbeat(bucket_name, e1, pulsetime=1)
-    client1.heartbeat(bucket_name, e2, pulsetime=1)
-    client1.heartbeat(bucket_name, e3, pulsetime=1)
+    client1.heartbeat(bucket_name, e1, pulsetime=1, queued=True)
+    client1.heartbeat(bucket_name, e2, pulsetime=1, queued=True)
+    client1.heartbeat(bucket_name, e3, pulsetime=1, queued=True)
 
     print("Trying to send events (should fail)")
     client1.connect()
     time.sleep(1)
     client1.disconnect()
 
-    input("Start aw-server, then press enter > ")
+    input("Start aw-server with --testing, then press enter > ")
 
     client2 = ActivityWatchClient("aw-test-client", testing=True)
     client2.setup_bucket(bucket_name, bucket_etype)
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     events = client2.get_events(bucket_name)
 
     print("Asserting latest event")
-    # print(events)
-    # print(events[0]['label'])
-    # print(e3['label'])
-    assert events[0]['label'] == e3['label']
+    print(events)
+    print(events[0]['data']['label'])
+    print(e3['data']['label'])
+    assert events[0]['data']['label'] == e3['data']['label']
