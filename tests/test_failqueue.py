@@ -1,50 +1,53 @@
 #!/usr/bin/env python3
 import time
-
-from random import random
+from pprint import pprint
+from random import randint
 from datetime import datetime, timedelta, timezone
+import logging
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
 
+now = datetime.now(timezone.utc)
+
 
 def create_unique_event():
-    return Event(data={"label":str(random())}, timestamp=datetime.now(timezone.utc), duration=timedelta())
+    return Event(timestamp=now, data={"label": str(randint(0, 10000))})
 
 
-if __name__ == "__main__":
-    bucket_name = "test-bucket"
+def test_failqueue():
+    client_name = "aw-test-client-" + str(randint(0, 10000))
+    bucket_id = "test-bucket-" + str(randint(0, 10000))
     bucket_etype = "test"
 
     input("Make sure aw-server isn't running, then press enter > ")
-    client1 = ActivityWatchClient("aw-test-client", testing=True)
-    client1.setup_bucket(bucket_name, bucket_etype)
+    client1 = ActivityWatchClient(client_name, testing=True)
+    client1.create_bucket(bucket_id, bucket_etype, queued=True)
 
     print("Creating events")
-    e1 = create_unique_event()
-    e2 = create_unique_event()
-    e3 = create_unique_event()
-    client1.heartbeat(bucket_name, e1, pulsetime=1, queued=True)
-    client1.heartbeat(bucket_name, e2, pulsetime=1, queued=True)
-    client1.heartbeat(bucket_name, e3, pulsetime=1, queued=True)
+    events = [create_unique_event() for _ in range(3)]
+    for i, e in enumerate(events):
+        e.timestamp += timedelta(seconds=i)
+        client1.heartbeat(bucket_id, e, pulsetime=1, queued=True)
 
     print("Trying to send events (should fail)")
-    client1.connect()
-    time.sleep(1)
-    client1.disconnect()
+    with client1:
+        time.sleep(1)
 
     input("Start aw-server with --testing, then press enter > ")
 
-    client2 = ActivityWatchClient("aw-test-client", testing=True)
-    client2.setup_bucket(bucket_name, bucket_etype)
-    client2.connect()
-    time.sleep(1)
+    client2 = ActivityWatchClient(client_name, testing=True)
+    client2.create_bucket(bucket_id, bucket_etype, queued=True)
+
+    # Here the previously queued events should be sent
+    with client2:
+        time.sleep(1)
 
     print("Getting events")
-    events = client2.get_events(bucket_name)
+    recv_events = client2.get_events(bucket_id)
 
     print("Asserting latest event")
-    print(events)
-    print(events[0]['data']['label'])
-    print(e3['data']['label'])
-    assert events[0]['data']['label'] == e3['data']['label']
+    pprint(recv_events)
+    pprint(recv_events[0].data['label'])
+    pprint(events[2].data['label'])
+    assert recv_events[0].data['label'] == events[2].data['label']
