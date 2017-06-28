@@ -4,7 +4,6 @@ import socket
 import os
 import threading
 import queue
-import atexit
 from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List, Any
@@ -24,6 +23,17 @@ logger = logging.getLogger(__name__)
 
 
 class ActivityWatchClient:
+    """
+    A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
+
+    Can be used with a `with`-statement as an alternative to manually calling connect and disconnect in a try-finally clause.
+
+    :Example:
+
+    .. literalinclude:: examples/client.py
+        :lines: 7-
+    """
+
     def __init__(self, client_name: str, testing=False) -> None:
         self.testing = testing
 
@@ -89,15 +99,23 @@ class ActivityWatchClient:
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
 
+    # @deprecated  # use insert_event instead
     def send_event(self, bucket_id: str, event: Event):
+        return self.insert_event(bucket_id, event)
+
+    # @deprecated  # use insert_events instead
+    def send_events(self, bucket_id: str, events: List[Event]):
+        return self.insert_events(bucket_id, events)
+
+    def insert_event(self, bucket_id: str, event: Event) -> Event:
         endpoint = "buckets/{}/events".format(bucket_id)
         data = event.to_json_dict()
-        return self._post(endpoint, data)
+        return Event(**self._post(endpoint, data).json())
 
-    def send_events(self, bucket_id: str, events: List[Event]):
+    def insert_events(self, bucket_id: str, events: List[Event]) -> None:
         endpoint = "buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict() for event in events]
-        return self._post(endpoint, data)
+        self._post(endpoint, data)
 
     def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
@@ -138,7 +156,6 @@ class ActivityWatchClient:
         self.create_bucket(bucket_id, event_type, queued=True)
 
     def __enter__(self):
-        """Can be used with a `with`-statement as an alternative to manually calling connect and disconnect"""
         self.connect()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -163,14 +180,6 @@ class RequestQueue(threading.Thread):
     Handles:
         - Cases where the server is temporarily unavailable
         - Saves all queued requests to file in case of a server crash
-
-    ```py
-    client = ActivityWatchClient("test")
-    rq = client.request_queue
-    rq.start()  # Alternatively use client.connect()
-    rq.stop()   # Alternatively use client.disconnect()
-    rq.join()
-    ```
     """
 
     VERSION = 1  # update this whenever the queue-file format changes
@@ -195,9 +204,6 @@ class RequestQueue(threading.Thread):
         if not os.path.exists(queued_dir):
             os.makedirs(queued_dir)
         self.queue_file = os.path.join(queued_dir, self.client.name + ".v{}.json".format(self.VERSION))
-
-        # Ensures things are saved properly when clients quit
-        atexit.register(lambda: self.stop())
 
     def _create_buckets(self):
         # Check if bucket exists
