@@ -176,7 +176,7 @@ class RequestQueue(threading.Thread):
     VERSION = 1  # update this whenever the queue-file format changes
 
     def __init__(self, client, dispatch_interval=0):
-        threading.Thread.__init__(self, daemon=False)
+        threading.Thread.__init__(self, daemon=True)
 
         self.client = client
         self.dispatch_interval = dispatch_interval  # Time to wait between dispatching events, useful for throttling.
