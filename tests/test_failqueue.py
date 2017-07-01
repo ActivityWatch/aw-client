@@ -51,3 +51,6 @@ def test_failqueue():
     pprint(recv_events[0].data['label'])
     pprint(events[2].data['label'])
     assert recv_events[0].data['label'] == events[2].data['label']
+
+if __name__ == '__main__':
+    test_failqueue()
