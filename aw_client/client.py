@@ -2,12 +2,11 @@ import json
 import logging
 import socket
 import os
-import time
 import threading
+import queue
 from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List, Any
-from queue import Queue
 
 import requests as req
 
@@ -24,29 +23,41 @@ logger = logging.getLogger(__name__)
 
 
 class ActivityWatchClient:
+    """
+    A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
+
+    Can be used with a `with`-statement as an alternative to manually calling connect and disconnect in a try-finally clause.
+
+    :Example:
+
+    .. literalinclude:: examples/client.py
+        :lines: 7-
+    """
+
     def __init__(self, client_name: str, testing=False) -> None:
         self.testing = testing
 
-        self.buckets = []  # type: List[Dict[str, str]]
-        # self.session = {}
-
+        # uses of the client_* variables is deprecated
         self.client_name = client_name + ("-testing" if testing else "")
         self.client_hostname = socket.gethostname()
 
-        client_config = load_config()
-        configsection = "server" if not testing else "server-testing"
+        # use these instead
+        self.name = self.client_name
+        self.hostname = self.client_hostname
 
-        self.server_hostname = client_config[configsection]["hostname"]
-        self.server_port = client_config[configsection]["port"]
+        config = load_config()
 
-        self.dispatch_thread = PostDispatchThread(self)
+        server_config = config["server" if not testing else "server-testing"]
+        self.server_host = "{hostname}:{port}".format(**server_config)
+
+        self.request_queue = RequestQueue(self)
 
     #
     #   Get/Post base requests
     #
 
     def _url(self, endpoint: str):
-        return "http://{}:{}/api/0/{}".format(self.server_hostname, self.server_port, endpoint)
+        return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
 
     def _get(self, endpoint: str, params=None) -> Optional[req.Response]:
         response = req.get(self._url(endpoint), params=params)
@@ -74,8 +85,8 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
-        endpoint = "buckets/{}/events".format(bucket)
+    def get_events(self, bucket_id: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
+        endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
         if limit:
@@ -88,15 +99,23 @@ class ActivityWatchClient:
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
 
-    def send_event(self, bucket: str, event: Event):
-        endpoint = "buckets/{}/events".format(bucket)
-        data = event.to_json_dict()
-        return self._post(endpoint, data)
+    # @deprecated  # use insert_event instead
+    def send_event(self, bucket_id: str, event: Event):
+        return self.insert_event(bucket_id, event)
 
-    def send_events(self, bucket: str, events: List[Event]):
-        endpoint = "buckets/{}/events".format(bucket)
+    # @deprecated  # use insert_events instead
+    def send_events(self, bucket_id: str, events: List[Event]):
+        return self.insert_events(bucket_id, events)
+
+    def insert_event(self, bucket_id: str, event: Event) -> Event:
+        endpoint = "buckets/{}/events".format(bucket_id)
+        data = event.to_json_dict()
+        return Event(**self._post(endpoint, data).json())
+
+    def insert_events(self, bucket_id: str, events: List[Event]) -> None:
+        endpoint = "buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict() for event in events]
-        return self._post(endpoint, data)
+        self._post(endpoint, data)
 
     def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
@@ -106,7 +125,7 @@ class ActivityWatchClient:
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
         data = event.to_json_dict()
         if queued:
-            self.dispatch_thread.add_request(endpoint, data)
+            self.request_queue.add_request(endpoint, data)
         else:
             return Event(**self._post(endpoint, data).json())
 
@@ -117,65 +136,81 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets/').json()
 
-    def create_bucket(self, bucket_id: str, event_type: str):
-        endpoint = "buckets/{}".format(bucket_id)
-        data = {
-            'client': self.client_name,
-            'hostname': self.client_hostname,
-            'type': event_type,
-        }
-        self._post(endpoint, data)
+    def create_bucket(self, bucket_id: str, event_type: str, queued=False):
+        if queued:
+            self.request_queue.register_bucket(bucket_id, event_type)
+        else:
+            endpoint = "buckets/{}".format(bucket_id)
+            data = {
+                'client': self.name,
+                'hostname': self.hostname,
+                'type': event_type,
+            }
+            self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str):
         self._delete('buckets/{}'.format(bucket_id))
 
+    @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
-        self.buckets.append({"bid": bucket_id, "etype": event_type})
+        self.create_bucket(bucket_id, event_type, queued=True)
 
-    def _create_buckets(self):
-        # Check if bucket exists
-        buckets = self.get_buckets()
-        for bucket in self.buckets:
-            if bucket['bid'] in buckets:
-                return False  # Don't do anything if bucket already exists
-            else:
-                self.create_bucket(bucket['bid'], bucket['etype'])
-                return True
+    def __enter__(self):
+        self.connect()
 
-    #
-    #   Connection methods
-    #
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
 
     def connect(self):
-        if not self.dispatch_thread.is_alive():
-            self.dispatch_thread.start()
+        if not self.request_queue.is_alive():
+            self.request_queue.start()
 
     def disconnect(self):
-        # FIXME: doesn't disconnect immediately
-        self.dispatch_thread.running = False
+        self.request_queue.stop()
+        self.request_queue.join()
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
+Bucket = namedtuple("Bucket", ["id", "type"])
 
 
-class PostDispatchThread(threading.Thread):
+class RequestQueue(threading.Thread):
+    """Used to asynchronously send heartbeats.
+
+    Handles:
+        - Cases where the server is temporarily unavailable
+        - Saves all queued requests to file in case of a server crash
+    """
+
+    VERSION = 1  # update this whenever the queue-file format changes
+
     def __init__(self, client, dispatch_interval=0):
         threading.Thread.__init__(self, daemon=True)
-        self.running = True
-        self.connected = False
-
-        # Time to wait between dispatching events, useful for throttling.
-        self.dispatch_interval = dispatch_interval
 
         self.client = client
-        self._queue = Queue()
+        self.dispatch_interval = dispatch_interval  # Time to wait between dispatching events, useful for throttling.
+
+        self.connected = False
+        self._stop_event = threading.Event()
+
+        # Buckets that will have events queued to them, will be created if they don't exist
+        self._registered_buckets = []  # type: List[Bucket]
+
+        self._queue = queue.Queue()
 
         # Setup failed queues file
         data_dir = get_data_dir("aw-client")
-        failed_queues_dir = os.path.join(data_dir, "failed_requests")
-        if not os.path.exists(failed_queues_dir):
-            os.makedirs(failed_queues_dir)
-        self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
+        queued_dir = os.path.join(data_dir, "queued")
+        if not os.path.exists(queued_dir):
+            os.makedirs(queued_dir)
+        self.queue_file = os.path.join(queued_dir, self.client.name + ".v{}.json".format(self.VERSION))
+
+    def _create_buckets(self):
+        # Check if bucket exists
+        buckets = self.client.get_buckets()
+        for bucket in self._registered_buckets:
+            if bucket.id not in buckets:
+                self.client.create_bucket(bucket.id, bucket.type)
 
     def _queue_to_file(self, endpoint: str, data: dict):
         entry = QueuedRequest(endpoint=endpoint, data=data)
@@ -210,56 +245,68 @@ class PostDispatchThread(threading.Thread):
         # When lost connection, save queue to file for later sending
         with open(self.queue_file, "w") as queue_fp:
             while not self._queue.empty():
-                # The `block=False` and `if request is not None` stuff here is actually required, see Python docs.
-                request = self._queue.get(block=False)
+                request = self._queue.get()
+
                 if request is not None:
                     queue_fp.write(json.dumps(request) + "\n")
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
-            self.client._create_buckets()
-            return True
+            self._create_buckets()
+            self.connected = True
+            logger.info("Connection to aw-server established")
         except req.RequestException:
-            return False
+            self.connected = False
 
-    # TODO: Handle SIGTERM/keyboard interrupt gracefully by saving to file first
-    # FIXME: Turns out this is a really bad idea, it's probably better if the
-    # entire program crashes should this thread crash. That way we can at least
-    # detect errors by detecting crashes in aw-qt. I just lost a day of data due
-    # to this, caused by "no space left on device" that corrupted the file.
-    # Bad state should be handled with precision, not with shit like this.
-    # @restart_on_exception
+        return self.connected
+
+    def wait(self, seconds) -> bool:
+        return self._stop_event.wait(seconds)
+
+    def should_stop(self):
+        return self._stop_event.is_set()
+
+    def _dispatch_request(self):
+        try:
+            request = self._queue.get(block=False)
+        except queue.Empty:
+            self.wait(0.1)
+            return
+
+        try:
+            self.client._post(request.endpoint, request.data)
+        except req.RequestException as e:
+            self._queue.queue.appendleft(request)
+            self.connected = False
+            logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
+            logger.warning(e)
+
     def run(self):
-        while self.running:
+        self._stop_event.clear()
+        while not self.should_stop():
             # Connect
-            while not self.connected and self.running:
-                self.connected = self._try_connect()
-                if self.connected:
-                    logger.info("Connection to aw-server established")
-                else:
-                    time.sleep(10)
+            while not self._try_connect():
+                if self.wait(10):
+                    break
 
             # Load requests from queuefile
             self._load_queue()
 
-            # Dispatch requests to server
-            while self.connected and self.running:
-                time.sleep(self.dispatch_interval)
-                request = self._queue.get()
-                try:
-                    self.client._post(request.endpoint, request.data)
-                except req.RequestException as e:
-                    self._queue.queue.appendleft(request)
-                    self.connected = False
-                    logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
-                    logger.warning(e)
-                    time.sleep(1)
+            # Dispatch requests until connection is lost or thread should stop
+            while self.connected and not self.should_stop():
+                self._dispatch_request()
 
-            # Disconnected or self.running set to false, save remaining to queuefile
+            # Disconnected or should stop, save remaining to queuefile
             self._save_queue()
+
+    def stop(self):
+        self._stop_event.set()
 
     def add_request(self, endpoint, data):
         if self.connected:
             self._queue.put(QueuedRequest(endpoint=endpoint, data=data))
         else:
             self._queue_to_file(endpoint, data)
+
+    def register_bucket(self, bucket_id: str, event_type: str):
+        self._registered_buckets.append(Bucket(bucket_id, event_type))

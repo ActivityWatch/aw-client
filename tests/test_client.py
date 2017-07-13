@@ -3,34 +3,38 @@ import time
 
 from random import random
 from datetime import datetime, timedelta, timezone
+from requests.exceptions import HTTPError
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
 
 def create_unique_event():
-    return Event(label=str(random()), timestamp=datetime.now(timezone.utc), duration=timedelta())
+    return Event(
+        timestamp=datetime.now(timezone.utc),
+        duration=timedelta(),
+        data={"label": str(random())}
+    )
 
 client = ActivityWatchClient("aw-test-client", testing=True)
+client.connect()
 
 bucket_name = "test-bucket"
 bucket_etype = "test"
-client.setup_bucket(bucket_name, bucket_etype)
+# Delete bucket before creating it, and handle error if it doesn't already exist
+try:
+    client.delete_bucket(bucket_name)
+except HTTPError as e:
+    pass
+client.create_bucket(bucket_name, bucket_etype)
 
 e1 = create_unique_event()
-e2 = create_unique_event()
-e3 = create_unique_event()
-client.send_event(bucket_name, e1)
-client.replace_last_event(bucket_name, e2)
-client.replace_last_event(bucket_name, e3)
-
-client.connect()
-time.sleep(1)
+client.insert_event(bucket_name, e1)
 
 print("Getting events")
 events = client.get_events(bucket_name)
 
 print("Asserting events")
-assert events[0]['label'] == e3['label']
+assert events[0]['data']['label'] == e1['data']['label']
 
 print("Getting bucket")
 buckets = client.get_buckets()

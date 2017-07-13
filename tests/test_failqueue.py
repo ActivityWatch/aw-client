@@ -1,48 +1,56 @@
 #!/usr/bin/env python3
 import time
-
-from random import random
+from pprint import pprint
+from random import randint
 from datetime import datetime, timedelta, timezone
+import logging
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
 
+now = datetime.now(timezone.utc)
+
+
 def create_unique_event():
-    return Event(label=str(random()), timestamp=datetime.now(timezone.utc), duration=timedelta())
-
-bucket_name = "test-bucket"
-bucket_etype = "test"
-
-input("Make sure aw-server isn't running, then press enter > ")
-client1 = ActivityWatchClient("aw-test-client", testing=True)
-client1.setup_bucket(bucket_name, bucket_etype)
-
-print("Creating events")
-e1 = create_unique_event()
-e2 = create_unique_event()
-e3 = create_unique_event()
-client1.send_event(bucket_name, e1)
-client1.replace_last_event(bucket_name, e2)
-client1.replace_last_event(bucket_name, e3)
-
-print("Trying to send events (should fail)")
-client1.connect()
-time.sleep(1)
-client1.disconnect()
-
-input("Start aw-server, then press enter > ")
-
-client2 = ActivityWatchClient("aw-test-client", testing=True)
-client2.setup_bucket(bucket_name, bucket_etype)
-client2.connect()
-time.sleep(1)
+    return Event(timestamp=now, data={"label": str(randint(0, 10000))})
 
 
-print("Getting events")
-events = client2.get_events(bucket_name)
+def test_failqueue():
+    client_name = "aw-test-client-" + str(randint(0, 10000))
+    bucket_id = "test-bucket-" + str(randint(0, 10000))
+    bucket_etype = "test"
 
-print("Asserting latest event")
-#print(events)
-#print(events[0]['label'])
-#print(e3['label'])
-assert events[0]['label'] == e3['label']
+    input("Make sure aw-server isn't running, then press enter > ")
+    client1 = ActivityWatchClient(client_name, testing=True)
+    client1.create_bucket(bucket_id, bucket_etype, queued=True)
+
+    print("Creating events")
+    events = [create_unique_event() for _ in range(3)]
+    for i, e in enumerate(events):
+        e.timestamp += timedelta(seconds=i)
+        client1.heartbeat(bucket_id, e, pulsetime=1, queued=True)
+
+    print("Trying to send events (should fail)")
+    with client1:
+        time.sleep(1)
+
+    input("Start aw-server with --testing, then press enter > ")
+
+    client2 = ActivityWatchClient(client_name, testing=True)
+    client2.create_bucket(bucket_id, bucket_etype, queued=True)
+
+    # Here the previously queued events should be sent
+    with client2:
+        time.sleep(1)
+
+    print("Getting events")
+    recv_events = client2.get_events(bucket_id)
+
+    print("Asserting latest event")
+    pprint(recv_events)
+    pprint(recv_events[0].data['label'])
+    pprint(events[2].data['label'])
+    assert recv_events[0].data['label'] == events[2].data['label']
+
+if __name__ == '__main__':
+    test_failqueue()
