@@ -85,15 +85,15 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket_id: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
+    def get_events(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
-        if limit:
+        if limit != None:
             params["limit"] = str(limit)
-        if start:
+        if start != None:
             params["start"] = start.isoformat()
-        if end:
+        if end != None:
             params["end"] = end.isoformat()
 
         events = self._get(endpoint, params=params).json()
