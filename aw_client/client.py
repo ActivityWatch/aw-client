@@ -34,7 +34,7 @@ class ActivityWatchClient:
         :lines: 7-
     """
 
-    def __init__(self, client_name: str, testing=False) -> None:
+    def __init__(self, client_name: str="unknown", testing=False) -> None:
         self.testing = testing
 
         # uses of the client_* variables is deprecated
