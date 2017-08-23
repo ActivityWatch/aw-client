@@ -78,7 +78,7 @@ class ActivityWatchClient:
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
-        endpoint = "info/"
+        endpoint = "info"
         return self._get(endpoint).json()
 
     #
