@@ -1,7 +1,13 @@
 .PHONY: build
 
+pip_install_args := .
+
+ifdef DEV
+pip_install_args := --editable $(pip_install_args)
+endif
+
 build:
-	python3 setup.py install
+	pip3 install .
 
 clean:
 	rm -rf build dist
