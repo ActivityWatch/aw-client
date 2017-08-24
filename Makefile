@@ -1,6 +1,6 @@
 .PHONY: build
 
-pip_install_args := .
+pip_install_args := . --process-dependency-links
 
 ifdef DEV
 pip_install_args := --editable $(pip_install_args)
