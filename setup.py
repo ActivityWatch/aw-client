@@ -9,6 +9,11 @@ setup(name='aw-client',
       author_email='erik@bjareho.lt',
       url='https://github.com/ActivityWatch/aw-client',
       packages=['aw_client'],
+      install_require=[
+          # for whatever reason, pip doesn't resolve dependencies in requirements.txt when package is installed by a dependent
+          'aw-core',
+          'requests'
+      ],
       classifiers=[
           'Programming Language :: Python :: 3'
       ])
