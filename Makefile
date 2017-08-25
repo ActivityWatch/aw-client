@@ -7,7 +7,7 @@ pip_install_args := --editable $(pip_install_args)
 endif
 
 build:
-	pip3 install .
+	pip3 install . -r requirements.txt
 
 clean:
 	rm -rf build dist
