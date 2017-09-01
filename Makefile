@@ -13,7 +13,7 @@ test:
 	python3 -c "import aw_client"
 
 typecheck:
-	MYPYPATH="${MYPYPATH}:../aw-core" mypy --follow-imports=skip aw_client
+	MYPYPATH="${MYPYPATH}:../aw-core" mypy aw_client --follow-imports=skip --ignore-missing-imports
 
 clean:
 	rm -rf build dist
