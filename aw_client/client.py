@@ -169,6 +169,9 @@ class ActivityWatchClient:
         self.request_queue.stop()
         self.request_queue.join()
 
+        # Throw away old thread object, create new one since same thread cannot be started twice
+        self.request_queue = RequestQueue(self)
+
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
