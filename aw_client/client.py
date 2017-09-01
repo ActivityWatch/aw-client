@@ -59,22 +59,42 @@ class ActivityWatchClient:
     def _url(self, endpoint: str):
         return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
 
-    def _get(self, endpoint: str, params=None) -> Optional[req.Response]:
-        response = req.get(self._url(endpoint), params=params)
-        response.raise_for_status()
-        return response
+    def _log_request_exception(self, r: req.Response, e: req.RequestException):
+        logger.warning(str(e))
+        logger.warning("{} request response had status code {}".format(r.request.method, r.status_code))
+        try:
+            logger.warning("Message: {}".format(r.status_code, r.json()))
+        except json.JSONDecodeError:
+            pass
+
+    def _get(self, endpoint: str, params: Optional[dict] = None) -> Optional[req.Response]:
+        r = req.get(self._url(endpoint), params=params)
+        try:
+            r.raise_for_status()
+        except req.RequestException as e:
+            self._log_request_exception(r, e)
+            raise e
+        return r
 
     def _post(self, endpoint: str, data: Any) -> Optional[req.Response]:
-        headers = {"Content-type": "application/json"}
-        response = req.post(self._url(endpoint), data=json.dumps(data), headers=headers)
-        response.raise_for_status()
-        return response
+        headers = {"Content-type": "application/json", "charset": "utf-8"}
+        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers)
+        try:
+            r.raise_for_status()
+        except req.RequestException as e:
+            self._log_request_exception(r, e)
+            raise e
+        return r
 
-    def _delete(self, endpoint: str, data: Any = {}) -> Optional[req.Response]:
+    def _delete(self, endpoint: str, data: Any = dict()) -> Optional[req.Response]:
         headers = {"Content-type": "application/json"}
-        response = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
-        response.raise_for_status()
-        return response
+        r = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
+        try:
+            r.raise_for_status()
+        except req.RequestException as e:
+            self._log_request_exception(r, e)
+            raise e
+        return r
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
@@ -283,7 +303,6 @@ class RequestQueue(threading.Thread):
             self._queue.queue.appendleft(request)
             self.connected = False
             logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
-            logger.warning(e)
 
     def run(self):
         self._stop_event.clear()
