@@ -89,11 +89,11 @@ class ActivityWatchClient:
         endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
-        if limit != None:
+        if limit is not None:
             params["limit"] = str(limit)
-        if start != None:
+        if start is not None:
             params["start"] = start.isoformat()
-        if end != None:
+        if end is not None:
             params["end"] = end.isoformat()
 
         events = self._get(endpoint, params=params).json()
