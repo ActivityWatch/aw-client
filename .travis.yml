@@ -16,6 +16,6 @@ install:
  - "make build"
 
 script:
- - "python3 -c 'import aw_client'"
- - "mypy aw_client; echo 'Not a failing step'"
+ - "make typecheck"
+ - "make test"
 

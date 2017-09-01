@@ -6,7 +6,7 @@ import threading
 import queue
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 
 import requests as req
 
@@ -126,6 +126,7 @@ class ActivityWatchClient:
         data = event.to_json_dict()
         if queued:
             self.request_queue.add_request(endpoint, data)
+            return None
         else:
             return Event(**self._post(endpoint, data).json())
 
