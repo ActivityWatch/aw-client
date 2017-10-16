@@ -38,7 +38,7 @@ class ActivityWatchClient:
         self.testing = testing
 
         # uses of the client_* variables is deprecated
-        self.client_name = client_name + ("-testing" if testing else "")
+        self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
         # use these instead
@@ -137,12 +137,12 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
-    def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False) -> Optional[Event]:
+    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
 
-        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
+        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
         data = event.to_json_dict()
         if queued:
             self.request_queue.add_request(endpoint, data)
