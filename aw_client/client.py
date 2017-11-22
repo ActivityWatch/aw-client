@@ -6,7 +6,7 @@ import threading
 import queue
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 
 import requests as req
 
