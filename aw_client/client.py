@@ -76,9 +76,9 @@ class ActivityWatchClient:
             raise e
         return r
 
-    def _post(self, endpoint: str, data: Any) -> Optional[req.Response]:
+    def _post(self, endpoint: str, data: Any, params: Optional[dict] = None) -> Optional[req.Response]:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
-        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers)
+        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
         try:
             r.raise_for_status()
         except req.RequestException as e:
@@ -175,6 +175,28 @@ class ActivityWatchClient:
     @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
+
+    #
+    #   Query (server-side transformation)
+    #
+
+    def query(self, query: str, start: datetime, end: datetime, name="", cache: bool=False) -> Union[int, dict]:
+        endpoint = "query/"
+        params = {"start": str(start), "end": str(end), "name": name, "cache": int(cache)}
+        if not len(name) < 0 and cache:
+            raise Exception("You are not allowed to do caching without a query name")
+        data = {
+            'query': [query]
+        }
+        response = self._post(endpoint, data, params=params)
+        if response.text.isdigit():
+            return int(response.text)
+        else:
+            return response.json()
+
+    #
+    #   Connect and disconnect
+    #
 
     def __enter__(self):
         self.connect()
