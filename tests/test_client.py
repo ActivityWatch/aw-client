@@ -42,3 +42,6 @@ print("Asserting bucket")
 assert bucket_name in buckets
 assert bucket_name == buckets[bucket_name]['id']
 assert bucket_etype == buckets[bucket_name]['type']
+
+with ActivityWatchClient("yet-another-client", testing=True) as client:
+    assert client.name == "yet-another-client"
