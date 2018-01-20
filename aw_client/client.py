@@ -137,6 +137,18 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
+    def get_eventcount(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> List[Event]:
+        endpoint = "buckets/{}/events/count".format(bucket_id)
+
+        params = dict()  # type: Dict[str, str]
+        if start is not None:
+            params["start"] = start.isoformat()
+        if end is not None:
+            params["end"] = end.isoformat()
+
+        response = self._get(endpoint, params=params)
+        return int(response.text)
+
     def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
             This makes the request itself non-blocking and therefore
