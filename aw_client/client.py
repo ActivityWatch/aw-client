@@ -6,7 +6,7 @@ import threading
 import queue
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 
 import requests as req
 
@@ -76,9 +76,9 @@ class ActivityWatchClient:
             raise e
         return r
 
-    def _post(self, endpoint: str, data: Any) -> Optional[req.Response]:
+    def _post(self, endpoint: str, data: Any, params: Optional[dict] = None) -> Optional[req.Response]:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
-        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers)
+        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
         try:
             r.raise_for_status()
         except req.RequestException as e:
@@ -137,6 +137,18 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
+    def get_eventcount(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> int:
+        endpoint = "buckets/{}/events/count".format(bucket_id)
+
+        params = dict()  # type: Dict[str, str]
+        if start is not None:
+            params["start"] = start.isoformat()
+        if end is not None:
+            params["end"] = end.isoformat()
+
+        response = self._get(endpoint, params=params)
+        return int(response.text)
+
     def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
             This makes the request itself non-blocking and therefore
@@ -175,6 +187,28 @@ class ActivityWatchClient:
     @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
+
+    #
+    #   Query (server-side transformation)
+    #
+
+    def query(self, query: str, start: datetime, end: datetime, name="", cache: bool=False) -> Union[int, dict]:
+        endpoint = "query/"
+        params = {"start": str(start), "end": str(end), "name": name, "cache": int(cache)}
+        if not len(name) < 0 and cache:
+            raise Exception("You are not allowed to do caching without a query name")
+        data = {
+            'query': [query]
+        }
+        response = self._post(endpoint, data, params=params)
+        if response.text.isdigit():
+            return int(response.text)
+        else:
+            return response.json()
+
+    #
+    #   Connect and disconnect
+    #
 
     def __enter__(self):
         self.connect()

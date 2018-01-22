@@ -36,6 +36,10 @@ events = client.get_events(bucket_name)
 print("Asserting events")
 assert events[0]['data']['label'] == e1['data']['label']
 
+print("Getting eventcount")
+eventcount = client.get_eventcount(bucket_name)
+assert eventcount == 1
+
 print("Getting bucket")
 buckets = client.get_buckets()
 print("Asserting bucket")
