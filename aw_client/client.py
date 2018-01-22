@@ -4,7 +4,7 @@ import socket
 import os
 import threading
 import queue
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import namedtuple
 from typing import Optional, List, Any, Dict
 
@@ -57,7 +57,10 @@ class ActivityWatchClient:
     #
 
     def _url(self, endpoint: str):
-        return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
+        version = endpoint.split("/")[0]  # Endpoint needs to include API version
+        if not version.isdigit():
+            endpoint = "0/" + endpoint
+        return "http://{host}/api/{endpoint}".format(host=self.server_host, endpoint=endpoint)
 
     def _log_request_exception(self, r: req.Response, e: req.RequestException):
         logger.warning(str(e))
@@ -112,9 +115,9 @@ class ActivityWatchClient:
         if limit is not None:
             params["limit"] = str(limit)
         if start is not None:
-            params["start"] = start.isoformat()
+            params["start"] = start.astimezone(timezone.utc).isoformat()
         if end is not None:
-            params["end"] = end.isoformat()
+            params["end"] = end.astimezone(timezone.utc).isoformat()
 
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
@@ -128,12 +131,12 @@ class ActivityWatchClient:
         return self.insert_events(bucket_id, events)
 
     def insert_event(self, bucket_id: str, event: Event) -> Event:
-        endpoint = "buckets/{}/events".format(bucket_id)
+        endpoint = "0/buckets/{}/events".format(bucket_id)
         data = event.to_json_dict()
         return Event(**self._post(endpoint, data).json())
 
     def insert_events(self, bucket_id: str, events: List[Event]) -> None:
-        endpoint = "buckets/{}/events".format(bucket_id)
+        endpoint = "0/buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
@@ -142,7 +145,7 @@ class ActivityWatchClient:
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
 
-        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
+        endpoint = "0/buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
         data = event.to_json_dict()
         if queued:
             self.request_queue.add_request(endpoint, data)
@@ -161,7 +164,7 @@ class ActivityWatchClient:
         if queued:
             self.request_queue.register_bucket(bucket_id, event_type)
         else:
-            endpoint = "buckets/{}".format(bucket_id)
+            endpoint = "0/buckets/{}".format(bucket_id)
             data = {
                 'client': self.name,
                 'hostname': self.hostname,
