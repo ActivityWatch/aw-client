@@ -12,7 +12,8 @@ setup(name='aw-client',
       install_requires=[
           # for whatever reason, pip doesn't resolve dependencies in requirements.txt when package is installed by a dependent
           'aw-core',
-          'requests'
+          'requests',
+          'persist-queue==0.3.4'
       ],
       classifiers=[
           'Programming Language :: Python :: 3'
