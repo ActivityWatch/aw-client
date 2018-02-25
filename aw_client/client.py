@@ -3,10 +3,10 @@ import logging
 import socket
 import os
 import threading
-import queue
+import shelve
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Dict, Union
+from typing import Optional, List, Any, Union, Dict
 
 import requests as req
 import persistqueue
@@ -256,6 +256,8 @@ class RequestQueue(threading.Thread):
         # Buckets that will have events queued to them, will be created if they don't exist
         self._registered_buckets = []  # type: List[Bucket]
 
+        self._attempt_reconnect_interval = 10
+
         # Setup failed queues file
         data_dir = get_data_dir("aw-client")
         queued_dir = os.path.join(data_dir, "queued")
@@ -308,7 +310,7 @@ class RequestQueue(threading.Thread):
             # Connect
             while not self._try_connect():
                 logger.warning("Not connected to server, {} requests in queue".format(self._persistqueue.qsize()))
-                if self.wait(10):
+                if self.wait(self._attempt_reconnect_interval):
                     break
 
             # Dispatch requests until connection is lost or thread should stop
@@ -319,6 +321,11 @@ class RequestQueue(threading.Thread):
         self._stop_event.set()
 
     def add_request(self, endpoint, data):
+        """
+        Add a request to the queue.
+        NOTE: Only supports heartbeats
+        """
+        assert "/heartbeat" in endpoint
         self._persistqueue.put(QueuedRequest(endpoint, data))
 
     def register_bucket(self, bucket_id: str, event_type: str):
