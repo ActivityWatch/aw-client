@@ -11,6 +11,7 @@ build:
 
 test:
 	python3 -c "import aw_client"
+	pytest -s -vv tests/test_requestqueue.py
 
 typecheck:
 	MYPYPATH="${MYPYPATH}:../aw-core" mypy aw_client --follow-imports=skip --ignore-missing-imports
