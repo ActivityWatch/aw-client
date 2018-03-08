@@ -276,8 +276,7 @@ class RequestQueue(threading.Thread):
                 self._current = self._persistqueue.get(block=False)
             except persistqueue.exceptions.Empty:
                 return None
-        else:
-            return self._current
+        return self._current
 
     def _task_done(self) -> None:
         self._current = None
