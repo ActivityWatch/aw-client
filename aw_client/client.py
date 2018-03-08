@@ -244,7 +244,7 @@ class RequestQueue(threading.Thread):
 
     VERSION = 1  # update this whenever the queue-file format changes
 
-    def __init__(self, client, dispatch_interval=0):
+    def __init__(self, client: ActivityWatchClient, dispatch_interval: float=0) -> None:
         threading.Thread.__init__(self, daemon=True)
 
         self.client = client
@@ -266,7 +266,7 @@ class RequestQueue(threading.Thread):
 
         persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue.sql".format(self.VERSION))
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
-        self._current: Optional[QueuedRequest] = None
+        self._current = None  # type: Optional[QueuedRequest]
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # self._current will always hold the next not-yet-sent event,
@@ -283,7 +283,7 @@ class RequestQueue(threading.Thread):
         self._current = None
         self._persistqueue.task_done()
 
-    def _create_buckets(self):
+    def _create_buckets(self) -> None:
         # Check if bucket exists
         buckets = self.client.get_buckets()
         for bucket in self._registered_buckets:
@@ -294,7 +294,7 @@ class RequestQueue(threading.Thread):
         try:  # Try to connect
             self._create_buckets()
             self.connected = True
-            logger.info("Connection to aw-server established")
+            logger.info("Connection to aw-server established by {}".format(self.client.client_name))
         except req.RequestException:
             self.connected = False
 
@@ -303,7 +303,7 @@ class RequestQueue(threading.Thread):
     def wait(self, seconds) -> bool:
         return self._stop_event.wait(seconds)
 
-    def should_stop(self):
+    def should_stop(self) -> bool:
         return self._stop_event.is_set()
 
     def _dispatch_request(self) -> None:
@@ -321,7 +321,7 @@ class RequestQueue(threading.Thread):
 
         self._task_done()
 
-    def run(self):
+    def run(self) -> None:
         self._stop_event.clear()
         while not self.should_stop():
             # Connect
@@ -334,16 +334,17 @@ class RequestQueue(threading.Thread):
             while self.connected and not self.should_stop():
                 self._dispatch_request()
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
-    def add_request(self, endpoint, data):
+    def add_request(self, endpoint: str, data: dict) -> None:
         """
         Add a request to the queue.
         NOTE: Only supports heartbeats
         """
         assert "/heartbeat" in endpoint
+        assert isinstance(data, dict)
         self._persistqueue.put(QueuedRequest(endpoint, data))
 
-    def register_bucket(self, bucket_id: str, event_type: str):
+    def register_bucket(self, bucket_id: str, event_type: str) -> None:
         self._registered_buckets.append(Bucket(bucket_id, event_type))
