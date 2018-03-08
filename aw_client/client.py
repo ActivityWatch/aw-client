@@ -266,6 +266,22 @@ class RequestQueue(threading.Thread):
 
         persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue.sql".format(self.VERSION))
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
+        self._current: Optional[QueuedRequest] = None
+
+    def _get_next(self) -> Optional[QueuedRequest]:
+        # self._current will always hold the next not-yet-sent event,
+        # until self._task_done() is called.
+        if not self._current:
+            try:
+                self._current = self._persistqueue.get(block=False)
+            except persistqueue.exceptions.Empty:
+                return None
+        else:
+            return self._current
+
+    def _task_done(self) -> None:
+        self._current = None
+        self._persistqueue.task_done()
 
     def _create_buckets(self):
         # Check if bucket exists
@@ -290,19 +306,20 @@ class RequestQueue(threading.Thread):
     def should_stop(self):
         return self._stop_event.is_set()
 
-    def _dispatch_request(self):
-        try:
-            request = self._persistqueue.get(block=False)
-        except persistqueue.exceptions.Empty:
+    def _dispatch_request(self) -> None:
+        request = self._get_next()
+        if not request:
             self.wait(0.5)  # seconds to wait before re-polling the empty queue
             return
 
         try:
             self.client._post(request.endpoint, request.data)
-            self._persistqueue.task_done()
         except req.RequestException as e:
             self.connected = False
             logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
+            return
+
+        self._task_done()
 
     def run(self):
         self._stop_event.clear()
