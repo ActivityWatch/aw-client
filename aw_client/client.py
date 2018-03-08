@@ -3,7 +3,6 @@ import logging
 import socket
 import os
 import threading
-import shelve
 from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List, Any, Union, Dict
