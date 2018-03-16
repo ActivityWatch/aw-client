@@ -263,7 +263,7 @@ class RequestQueue(threading.Thread):
         if not os.path.exists(queued_dir):
             os.makedirs(queued_dir)
 
-        persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue.sql".format(self.VERSION))
+        persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue".format(self.VERSION))
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
         self._current = None  # type: Optional[QueuedRequest]
 
@@ -307,7 +307,7 @@ class RequestQueue(threading.Thread):
     def _dispatch_request(self) -> None:
         request = self._get_next()
         if not request:
-            self.wait(0.5)  # seconds to wait before re-polling the empty queue
+            self.wait(0.1)  # seconds to wait before re-polling the empty queue
             return
 
         try:
