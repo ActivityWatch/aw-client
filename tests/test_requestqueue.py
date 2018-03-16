@@ -14,13 +14,6 @@ basicConfig(level=DEBUG)
 import requests
 from aw_client.client import RequestQueue
 
-"""
-import pdb
-
-def test_pdb():
-    pdb.set_trace()
-"""
-
 
 class MockClient:
     name = "Mock"
