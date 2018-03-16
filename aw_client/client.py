@@ -243,11 +243,10 @@ class RequestQueue(threading.Thread):
 
     VERSION = 1  # update this whenever the queue-file format changes
 
-    def __init__(self, client: ActivityWatchClient, dispatch_interval: float=0) -> None:
+    def __init__(self, client: ActivityWatchClient) -> None:
         threading.Thread.__init__(self, daemon=True)
 
         self.client = client
-        self.dispatch_interval = dispatch_interval  # Time to wait between dispatching events, useful for throttling.
 
         self.connected = False
         self._stop_event = threading.Event()
