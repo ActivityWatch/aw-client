@@ -39,7 +39,7 @@ class ActivityWatchClient:
         self.server_host = server_host if server_host != None else client_config[configsection]["hostname"]
         self.server_port = server_port if server_port != None else client_config[configsection]["port"]
 
-        self.instance = SingleInstance("{}@{}:{}".format(self.client_name, self.server_host, self.server_port))
+        self.instance = SingleInstance("{}-at-{}:{}".format(self.client_name, self.server_host, self.server_port))
 
         self.dispatch_thread = PostDispatchThread(self)
 
