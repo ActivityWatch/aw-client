@@ -3,6 +3,7 @@ import logging
 import socket
 import os
 import threading
+import re
 from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List, Any, Union, Dict
@@ -13,6 +14,7 @@ import persistqueue
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
 from aw_core.decorators import deprecated
+from aw_transform import heartbeat_merge
 
 from .config import load_config
 
@@ -330,6 +332,61 @@ class RequestQueue(threading.Thread):
             # Dispatch requests until connection is lost or thread should stop
             while self.connected and not self.should_stop():
                 self._dispatch_request()
+
+    def _premerge_events(self):
+        # First, get all events and put them in a list
+        requests = []  # type: List[QueuedRequest]
+        if self._current:
+            requests.append(self._current)
+        while True:
+            next = self._persistqueue.get(block=False)
+            if next:
+                requests.append(next)
+            else:
+                break
+
+        if len(requests <= 1):
+            return
+
+        def _parse_pulsetime(endpoint: str):
+            pulsetime_matches = re.findall(r"\?pulsetime=([0-9]+)", endpoint)
+            if pulsetime_matches:
+                return int(pulsetime_matches[0])
+            else:
+                logger.warning("Couldn't detect pulsetime, falling back to 30s")
+                return 30
+
+        def _heartbeat_reduce(events: List[Event], pulsetimes: List[float]) -> (List[Event], float):
+            # Essentially copied from aw_transform.heartbeat.heartbeat_reduce but with
+            # the added feature of variable pulsetimes.
+            reduced = []  # type: List[Event]
+            if len(events) > 0:
+                reduced.append(events.pop(0))
+                pulsetimes.pop(0)  # pop off the first pulsetime
+            for heartbeat in events:
+                pulsetime = pulsetimes.pop(0)
+                merged = heartbeat_merge(reduced[-1], heartbeat, pulsetime)
+                if merged is not None:
+                    reduced[-1] = merged
+                else:
+                    reduced.append(heartbeat)
+
+            assert len(events) == len(pulsetimes) == 0
+
+            return reduced
+
+        ep = requests[0].endpoint
+        ep_pulsetime_zero = ep[:ep.find("?pulsetime=")] + "?pulsetime=0"
+
+        # Then, merge all events
+        events = list(map(lambda r: r.data, requests))
+        pulsetimes = list(map(lambda r: _parse_pulsetime(r.endpoint), requests))
+        merged_events = _heartbeat_reduce(events, pulsetimes)
+        merged_requests = \
+            [QueuedRequest(requests[0].endpoint, merged_events[0])] + \
+            [QueuedRequest(ep_pulsetime_zero, e) for e in merged_events[1:]]
+
+        return merged_requests
 
     def stop(self) -> None:
         self._stop_event.set()
