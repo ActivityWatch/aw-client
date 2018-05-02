@@ -17,7 +17,7 @@ if __name__ == "__main__":
     parser_buckets.set_defaults(which='buckets')
 
     args = parser.parse_args()
-    print("Args: {}".format(args))
+    # print("Args: {}".format(args))
 
     if args.which == "heartbeat":
         raise NotImplementedError
@@ -28,3 +28,5 @@ if __name__ == "__main__":
         print("Buckets:")
         for bucket in buckets:
             print(" - {}".format(bucket))
+    else:
+        parser.print_help()
