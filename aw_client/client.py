@@ -34,7 +34,7 @@ class ActivityWatchClient:
         :lines: 7-
     """
 
-    def __init__(self, client_name: str="unknown", testing=False) -> None:
+    def __init__(self, client_name: str="unknown", testing=False, host=None) -> None:
         self.testing = testing
 
         # uses of the client_* variables is deprecated
@@ -47,8 +47,11 @@ class ActivityWatchClient:
 
         config = load_config()
 
-        server_config = config["server" if not testing else "server-testing"]
-        self.server_host = "{hostname}:{port}".format(**server_config)
+        if host:
+            self.server_host = host
+        else:
+            server_config = config["server" if not testing else "server-testing"]
+            self.server_host = "{hostname}:{port}".format(**server_config)
 
         self.request_queue = RequestQueue(self)
 
@@ -194,11 +197,12 @@ class ActivityWatchClient:
 
     def query(self, query: str, start: datetime, end: datetime, name="", cache: bool=False) -> Union[int, dict]:
         endpoint = "query/"
-        params = {"start": str(start), "end": str(end), "name": name, "cache": int(cache)}
+        params = {"name": name, "cache": int(cache)}
         if not len(name) < 0 and cache:
             raise Exception("You are not allowed to do caching without a query name")
         data = {
-            'query': [query]
+            'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
+            'query': query.split("\n")
         }
         response = self._post(endpoint, data, params=params)
         if response.text.isdigit():
