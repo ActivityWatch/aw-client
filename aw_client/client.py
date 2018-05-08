@@ -3,12 +3,12 @@ import logging
 import socket
 import os
 import threading
-import queue
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Dict, Union
+from typing import Optional, List, Any, Union, Dict
 
 import requests as req
+import persistqueue
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
@@ -247,11 +247,10 @@ class RequestQueue(threading.Thread):
 
     VERSION = 1  # update this whenever the queue-file format changes
 
-    def __init__(self, client, dispatch_interval=0):
+    def __init__(self, client: ActivityWatchClient) -> None:
         threading.Thread.__init__(self, daemon=True)
 
         self.client = client
-        self.dispatch_interval = dispatch_interval  # Time to wait between dispatching events, useful for throttling.
 
         self.connected = False
         self._stop_event = threading.Event()
@@ -259,65 +258,44 @@ class RequestQueue(threading.Thread):
         # Buckets that will have events queued to them, will be created if they don't exist
         self._registered_buckets = []  # type: List[Bucket]
 
-        self._queue = queue.Queue()
+        self._attempt_reconnect_interval = 10
 
         # Setup failed queues file
         data_dir = get_data_dir("aw-client")
         queued_dir = os.path.join(data_dir, "queued")
         if not os.path.exists(queued_dir):
             os.makedirs(queued_dir)
-        self.queue_file = os.path.join(queued_dir, self.client.name + ".v{}.json".format(self.VERSION))
 
-    def _create_buckets(self):
+        persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue".format(self.VERSION))
+        self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
+        self._current = None  # type: Optional[QueuedRequest]
+
+    def _get_next(self) -> Optional[QueuedRequest]:
+        # self._current will always hold the next not-yet-sent event,
+        # until self._task_done() is called.
+        if not self._current:
+            try:
+                self._current = self._persistqueue.get(block=False)
+            except persistqueue.exceptions.Empty:
+                return None
+        return self._current
+
+    def _task_done(self) -> None:
+        self._current = None
+        self._persistqueue.task_done()
+
+    def _create_buckets(self) -> None:
         # Check if bucket exists
         buckets = self.client.get_buckets()
         for bucket in self._registered_buckets:
             if bucket.id not in buckets:
                 self.client.create_bucket(bucket.id, bucket.type)
 
-    def _queue_to_file(self, endpoint: str, data: dict):
-        entry = QueuedRequest(endpoint=endpoint, data=data)
-        with open(self.queue_file, "a+") as queue_fp:
-            queue_fp.write(json.dumps(entry) + "\n")
-
-    def _load_queue(self):
-        # If crash when lost connection, queue failed requests
-        failed_requests = []  # type: List[QueuedRequests]
-
-        # Load failed events from queue into failed_requests
-        open(self.queue_file, "a").close()  # Create file if doesn't exist
-        with open(self.queue_file, "r") as queue_fp:
-            for request in queue_fp:
-                logger.debug(request)
-                try:
-                    failed_requests.append(QueuedRequest(*json.loads(request)))
-                except json.decoder.JSONDecodeError as e:
-                    logger.error(e, exc_info=True)
-                    logger.error("Request that failed: {}".format(request))
-                    logger.warning("Skipping request that failed to load")
-
-        # Insert failed_requests into dispatching queue
-        # FIXME: We really shouldn't be clearing the file here until the events have been sent to server.
-        open(self.queue_file, "w").close()  # Clear file
-        if len(failed_requests) > 0:
-            for request in failed_requests:
-                self._queue.put(request)
-            logger.info("Loaded {} failed requests from queuefile".format(len(failed_requests)))
-
-    def _save_queue(self):
-        # When lost connection, save queue to file for later sending
-        with open(self.queue_file, "w") as queue_fp:
-            while not self._queue.empty():
-                request = self._queue.get()
-
-                if request is not None:
-                    queue_fp.write(json.dumps(request) + "\n")
-
     def _try_connect(self) -> bool:
         try:  # Try to connect
             self._create_buckets()
             self.connected = True
-            logger.info("Connection to aw-server established")
+            logger.info("Connection to aw-server established by {}".format(self.client.client_name))
         except req.RequestException:
             self.connected = False
 
@@ -326,49 +304,48 @@ class RequestQueue(threading.Thread):
     def wait(self, seconds) -> bool:
         return self._stop_event.wait(seconds)
 
-    def should_stop(self):
+    def should_stop(self) -> bool:
         return self._stop_event.is_set()
 
-    def _dispatch_request(self):
-        try:
-            request = self._queue.get(block=False)
-        except queue.Empty:
-            self.wait(0.1)
+    def _dispatch_request(self) -> None:
+        request = self._get_next()
+        if not request:
+            self.wait(0.1)  # seconds to wait before re-polling the empty queue
             return
 
         try:
             self.client._post(request.endpoint, request.data)
         except req.RequestException as e:
-            self._queue.queue.appendleft(request)
             self.connected = False
             logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
+            return
 
-    def run(self):
+        self._task_done()
+
+    def run(self) -> None:
         self._stop_event.clear()
         while not self.should_stop():
             # Connect
             while not self._try_connect():
-                if self.wait(10):
+                logger.warning("Not connected to server, {} requests in queue".format(self._persistqueue.qsize()))
+                if self.wait(self._attempt_reconnect_interval):
                     break
-
-            # Load requests from queuefile
-            self._load_queue()
 
             # Dispatch requests until connection is lost or thread should stop
             while self.connected and not self.should_stop():
                 self._dispatch_request()
 
-            # Disconnected or should stop, save remaining to queuefile
-            self._save_queue()
-
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
-    def add_request(self, endpoint, data):
-        if self.connected:
-            self._queue.put(QueuedRequest(endpoint=endpoint, data=data))
-        else:
-            self._queue_to_file(endpoint, data)
+    def add_request(self, endpoint: str, data: dict) -> None:
+        """
+        Add a request to the queue.
+        NOTE: Only supports heartbeats
+        """
+        assert "/heartbeat" in endpoint
+        assert isinstance(data, dict)
+        self._persistqueue.put(QueuedRequest(endpoint, data))
 
-    def register_bucket(self, bucket_id: str, event_type: str):
+    def register_bucket(self, bucket_id: str, event_type: str) -> None:
         self._registered_buckets.append(Bucket(bucket_id, event_type))
