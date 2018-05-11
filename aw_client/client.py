@@ -262,7 +262,11 @@ class RequestQueue(threading.Thread):
         if not os.path.exists(queued_dir):
             os.makedirs(queued_dir)
 
-        persistqueue_path = os.path.join(queued_dir, self.client.name + ".v{}.persistqueue".format(self.VERSION))
+        persistqueue_path = os.path.join(queued_dir,
+            "{}{}.v{}.persistqueue".format(
+                self.client.name,
+                "-testing" if client.testing else "",
+                self.VERSION))
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
         self._current = None  # type: Optional[QueuedRequest]
 
