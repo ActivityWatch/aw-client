@@ -51,11 +51,12 @@ class ActivityWatchClient:
         self.server_host = "{hostname}:{port}".format(**server_config)
 
         client_config = config["client" if not testing else "client-testing"]
-        self.commit_interval = timedelta(seconds=client_config.getfloat("commit_interval"))
+        self.commit_interval = client_config.getfloat("commit_interval")
 
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}
+        self.last_sent_heartbeat = {}
 
     #
     #   Get/Post base requests
@@ -159,19 +160,39 @@ class ActivityWatchClient:
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
 
-        if bucket_id in self.last_heartbeat:
-            last_heartbeat = self.last_heartbeat[bucket_id]
-            last_endtime = last_heartbeat.timestamp + last_heartbeat.duration
+        # pre-merge optimization
+        # TODO: Fix pulsetime
+        last_sent_heartbeat = None
+        if bucket_id in self.last_sent_heartbeat:
+            last_sent_heartbeat = self.last_sent_heartbeat[bucket_id]
+            last_sent_endtime = last_sent_heartbeat.timestamp + last_sent_heartbeat.duration
             event_endtime = event.timestamp + event.duration
-            if last_heartbeat.data == event.data and (event_endtime - last_endtime) < self.commit_interval:
+            diff = (event_endtime - last_sent_endtime).total_seconds()
+            if last_sent_heartbeat.data == event.data and (diff < self.commit_interval and diff < pulsetime):
+                self.last_heartbeat[bucket_id] = event
                 return
+
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
         data = event.to_json_dict()
-        self.last_heartbeat[bucket_id] = event
+
+        # pre-merge optimization
+        last_heartbeat_was_sent = True
+        if bucket_id in self.last_sent_heartbeat and last_sent_heartbeat.data != event.data:
+            last_heartbeat_was_sent = self.last_heartbeat[bucket_id] == self.last_sent_heartbeat[bucket_id]
+
         if queued:
+            # pre-merge optimization
+            if not last_heartbeat_was_sent:
+                self.request_queue.add_request(endpoint, self.last_heartbeat[bucket_id].to_json_dict())
             self.request_queue.add_request(endpoint, data)
         else:
+            # pre-merge optimization
+            if not last_heartbeat_was_sent:
+                self.request_queue.add_request(endpoint, self.last_heartbeat[bucket_id].to_json_dict())
             self._post(endpoint, data).json()
+
+        self.last_heartbeat[bucket_id] = event
+        self.last_sent_heartbeat[bucket_id] = event
 
     #
     #   Bucket get/post requests
