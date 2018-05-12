@@ -3,7 +3,7 @@ import logging
 import socket
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import namedtuple
 from typing import Optional, List, Any, Union, Dict
 
@@ -50,7 +50,12 @@ class ActivityWatchClient:
         server_config = config["server" if not testing else "server-testing"]
         self.server_host = "{hostname}:{port}".format(**server_config)
 
+        client_config = config["client" if not testing else "client-testing"]
+        self.commit_interval = timedelta(seconds=client_config.getfloat("commit_interval"))
+
         self.request_queue = RequestQueue(self)
+        # Dict of each last heartbeat in each bucket
+        self.last_heartbeat = {}
 
     #
     #   Get/Post base requests
@@ -149,18 +154,24 @@ class ActivityWatchClient:
         response = self._get(endpoint, params=params)
         return int(response.text)
 
-    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
+    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False):
         """ This endpoint can use the failed requests retry queue.
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
 
+        if bucket_id in self.last_heartbeat:
+            last_heartbeat = self.last_heartbeat[bucket_id]
+            last_endtime = last_heartbeat.timestamp + last_heartbeat.duration
+            event_endtime = event.timestamp + event.duration
+            if last_heartbeat.data == event.data and (event_endtime - last_endtime) < self.commit_interval:
+                return
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
         data = event.to_json_dict()
+        self.last_heartbeat[bucket_id] = event
         if queued:
             self.request_queue.add_request(endpoint, data)
-            return None
         else:
-            return Event(**self._post(endpoint, data).json())
+            self._post(endpoint, data).json()
 
     #
     #   Bucket get/post requests
