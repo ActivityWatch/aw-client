@@ -55,7 +55,7 @@ class ActivityWatchClient:
 
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
-        self.last_heartbeat = {}
+        self.last_heartbeat = {} #type: dict
 
     #
     #   Get/Post base requests
