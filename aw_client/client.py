@@ -154,7 +154,7 @@ class ActivityWatchClient:
         response = self._get(endpoint, params=params)
         return int(response.text)
 
-    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False):
+    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
         """ This endpoint can use the failed requests retry queue.
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
@@ -162,24 +162,25 @@ class ActivityWatchClient:
         from aw_transform.heartbeats import heartbeat_merge
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
 
-        if bucket_id not in self.last_heartbeat:
-            self.last_heartbeat[bucket_id] = event
-            return
+        if queued:
+            # Pre-merge heartbeats
+            if bucket_id not in self.last_heartbeat:
+                self.last_heartbeat[bucket_id] = event
+                return None
 
-        last_heartbeat = self.last_heartbeat[bucket_id]
+            last_heartbeat = self.last_heartbeat[bucket_id]
 
-        merge = heartbeat_merge(last_heartbeat, event, pulsetime)
-        diff = (event.timestamp - last_heartbeat.timestamp).total_seconds()
-        if merge and diff < self.commit_interval:
-            self.last_heartbeat[bucket_id] = merge
-        else:
-            print(last_heartbeat)
-            data = last_heartbeat.to_json_dict()
-            if queued:
-                self.request_queue.add_request(endpoint, data)
+            merge = heartbeat_merge(last_heartbeat, event, pulsetime)
+            diff = (event.timestamp - last_heartbeat.timestamp).total_seconds()
+            if merge and diff < self.commit_interval:
+                self.last_heartbeat[bucket_id] = merge
             else:
-                self._post(endpoint, data)
-            self.last_heartbeat[bucket_id] = event
+                data = last_heartbeat.to_json_dict()
+                self.request_queue.add_request(endpoint, data)
+                self.last_heartbeat[bucket_id] = event
+            return None
+        else:
+            return Event(**self._post(endpoint, data).json())
 
 
     #
