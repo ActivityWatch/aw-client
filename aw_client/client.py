@@ -72,7 +72,7 @@ class ActivityWatchClient:
         except json.JSONDecodeError:
             pass
 
-    def _get(self, endpoint: str, params: Optional[dict] = None) -> Optional[req.Response]:
+    def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
         r = req.get(self._url(endpoint), params=params)
         try:
             r.raise_for_status()
@@ -81,7 +81,7 @@ class ActivityWatchClient:
             raise e
         return r
 
-    def _post(self, endpoint: str, data: Any, params: Optional[dict] = None) -> Optional[req.Response]:
+    def _post(self, endpoint: str, data: Any, params: Optional[dict] = None) -> req.Response:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
         r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
         try:
@@ -91,7 +91,7 @@ class ActivityWatchClient:
             raise e
         return r
 
-    def _delete(self, endpoint: str, data: Any = dict()) -> Optional[req.Response]:
+    def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
         headers = {"Content-type": "application/json"}
         r = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
         try:
