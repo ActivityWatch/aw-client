@@ -1,11 +1,10 @@
-import sys
 import argparse
 from datetime import timedelta, datetime
 
 import aw_client
 
 
-if __name__ == "__main__":
+def main():
     now = datetime.now()
     td1day = timedelta(days=1)
     td1yr = timedelta(days=365)
@@ -30,7 +29,7 @@ if __name__ == "__main__":
     parser_buckets.add_argument('bucket')
 
     parser_query = subparsers.add_parser('query',
-                                           help='Query events from bucket')
+                                         help='Query events from bucket')
     parser_query.set_defaults(which='query')
     parser_query.add_argument('path')
     parser_query.add_argument('--start', default=now - td1day)
@@ -61,3 +60,7 @@ if __name__ == "__main__":
         print(result)
     else:
         parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
