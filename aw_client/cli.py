@@ -4,6 +4,15 @@ from datetime import timedelta, datetime
 import aw_client
 
 
+def _valid_date(s):
+    # https://stackoverflow.com/questions/25470844/specify-format-for-input-arguments-argparse-python
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        msg = "Not a valid date: '{0}'.".format(s)
+        raise argparse.ArgumentTypeError(msg)
+
+
 def main():
     now = datetime.now()
     td1day = timedelta(days=1)
@@ -32,8 +41,10 @@ def main():
                                          help='Query events from bucket')
     parser_query.set_defaults(which='query')
     parser_query.add_argument('path')
-    parser_query.add_argument('--start', default=now - td1day)
-    parser_query.add_argument('--end', default=now + 10 * td1yr)
+    parser_query.add_argument('--name')
+    parser_query.add_argument('--cache', action='store_true')
+    parser_query.add_argument('--start', default=now - td1day, type=_valid_date)
+    parser_query.add_argument('--end', default=now + 10 * td1yr, type=_valid_date)
 
     args = parser.parse_args()
     # print("Args: {}".format(args))
@@ -55,9 +66,14 @@ def main():
     elif args.which == "query":
         with open(args.path) as f:
             query = f.read()
-        result = client.query(query, args.start, args.end)
-        print("events:")
-        print(result)
+        result = client.query(query, args.start, args.end, cache=args.cache, name=args.name)
+        for period in result:
+            print("Showing 10 out of {} events:".format(len(period)))
+            for event in period[:10]:
+                event.pop("id")
+                event.pop("timestamp")
+                print(" - Duration: {} \tData: {}".format(str(timedelta(seconds=event["duration"])).split(".")[0], event["data"]))
+            print("Total duration:\t", timedelta(seconds=sum(e["duration"] for e in period)))
     else:
         parser.print_help()
 

@@ -62,11 +62,12 @@ class ActivityWatchClient:
     def _url(self, endpoint: str):
         return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
 
-    def _log_request_exception(self, r: req.Response, e: req.RequestException):
+    def _log_request_exception(self, e: req.RequestException):
+        r = e.response
         logger.warning(str(e))
-        logger.warning("{} request response had status code {}".format(r.request.method, r.status_code))
         try:
-            logger.warning("Message: {}".format(r.status_code, r.json()))
+            json = r.json()
+            logger.warning("Error message received: {}".format(r.json()))
         except json.JSONDecodeError:
             pass
 
@@ -75,7 +76,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -85,7 +86,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -95,7 +96,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -195,11 +196,14 @@ class ActivityWatchClient:
     #   Query (server-side transformation)
     #
 
-    def query(self, query: str, start: datetime, end: datetime, name="", cache: bool=False) -> Union[int, dict]:
+    def query(self, query: str, start: datetime, end: datetime, name: str=None, cache: bool=False) -> Union[int, dict]:
         endpoint = "query/"
-        params = {"name": name, "cache": int(cache)}
-        if not len(name) < 0 and cache:
-            raise Exception("You are not allowed to do caching without a query name")
+        params = {}  # type: Dict[str, Any]
+        if cache:
+            if not name:
+                raise Exception("You are not allowed to do caching without a query name")
+            params["name"] = name
+            params["cache"] = int(cache)
         data = {
             'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
             'query': query.split("\n")
