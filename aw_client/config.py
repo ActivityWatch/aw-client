@@ -13,6 +13,13 @@ default_client_config["server-testing"] = {
     "port": "5666"
 }
 
+default_client_config["client"] = {
+    "commit_interval": "30",
+}
+default_client_config["client-testing"] = {
+    "commit_interval": "10"
+}
+
 
 def load_config():
     return aw_core.config.load_config("aw-client", default_client_config)

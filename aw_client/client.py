@@ -3,7 +3,7 @@ import logging
 import socket
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import namedtuple
 from typing import Optional, List, Any, Union, Dict
 
@@ -50,7 +50,12 @@ class ActivityWatchClient:
         server_config = config["server" if not testing else "server-testing"]
         self.server_host = "{hostname}:{port}".format(**server_config)
 
+        client_config = config["client" if not testing else "client-testing"]
+        self.commit_interval = client_config.getfloat("commit_interval")
+
         self.request_queue = RequestQueue(self)
+        # Dict of each last heartbeat in each bucket
+        self.last_heartbeat = {} #type: dict
 
     #
     #   Get/Post base requests
@@ -154,13 +159,29 @@ class ActivityWatchClient:
             This makes the request itself non-blocking and therefore
             the function will in that case always returns None. """
 
+        from aw_transform.heartbeats import heartbeat_merge
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
-        data = event.to_json_dict()
+
         if queued:
-            self.request_queue.add_request(endpoint, data)
+            # Pre-merge heartbeats
+            if bucket_id not in self.last_heartbeat:
+                self.last_heartbeat[bucket_id] = event
+                return None
+
+            last_heartbeat = self.last_heartbeat[bucket_id]
+
+            merge = heartbeat_merge(last_heartbeat, event, pulsetime)
+            diff = (event.timestamp - last_heartbeat.timestamp).total_seconds()
+            if merge and diff < self.commit_interval:
+                self.last_heartbeat[bucket_id] = merge
+            else:
+                data = last_heartbeat.to_json_dict()
+                self.request_queue.add_request(endpoint, data)
+                self.last_heartbeat[bucket_id] = event
             return None
         else:
             return Event(**self._post(endpoint, data).json())
+
 
     #
     #   Bucket get/post requests

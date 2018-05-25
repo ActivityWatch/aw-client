@@ -18,6 +18,9 @@ from aw_client.client import RequestQueue
 class MockClient:
     name = "Mock"
 
+    def __init__(self):
+        self.testing = True
+
     def get_buckets(self, *args, **kwargs):
         print("Called get_buckets")
         return [{"id": "test", "name": "Test"}]
