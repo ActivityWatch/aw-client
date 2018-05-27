@@ -1,5 +1,7 @@
+import json
 import argparse
 from datetime import timedelta, datetime
+from pprint import pprint
 
 import aw_client
 
@@ -43,6 +45,7 @@ def main():
     parser_query.add_argument('path')
     parser_query.add_argument('--name')
     parser_query.add_argument('--cache', action='store_true')
+    parser_query.add_argument('--json', action='store_true', help='Output resulting JSON')
     parser_query.add_argument('--start', default=now - td1day, type=_valid_date)
     parser_query.add_argument('--end', default=now + 10 * td1yr, type=_valid_date)
 
@@ -67,13 +70,16 @@ def main():
         with open(args.path) as f:
             query = f.read()
         result = client.query(query, args.start, args.end, cache=args.cache, name=args.name)
-        for period in result:
-            print("Showing 10 out of {} events:".format(len(period)))
-            for event in period[:10]:
-                event.pop("id")
-                event.pop("timestamp")
-                print(" - Duration: {} \tData: {}".format(str(timedelta(seconds=event["duration"])).split(".")[0], event["data"]))
-            print("Total duration:\t", timedelta(seconds=sum(e["duration"] for e in period)))
+        if args.json:
+            print(json.dumps(result))
+        else:
+            for period in result:
+                print("Showing 10 out of {} events:".format(len(period)))
+                for event in period[:10]:
+                    event.pop("id")
+                    event.pop("timestamp")
+                    print(" - Duration: {} \tData: {}".format(str(timedelta(seconds=event["duration"])).split(".")[0], event["data"]))
+                print("Total duration:\t", timedelta(seconds=sum(e["duration"] for e in period)))
     else:
         parser.print_help()
 
