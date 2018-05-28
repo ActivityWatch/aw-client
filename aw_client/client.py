@@ -34,7 +34,7 @@ class ActivityWatchClient:
         :lines: 7-
     """
 
-    def __init__(self, client_name: str="unknown", testing=False) -> None:
+    def __init__(self, client_name: str="unknown", testing=False, host=None) -> None:
         self.testing = testing
 
         # uses of the client_* variables is deprecated
@@ -47,8 +47,11 @@ class ActivityWatchClient:
 
         config = load_config()
 
-        server_config = config["server" if not testing else "server-testing"]
-        self.server_host = "{hostname}:{port}".format(**server_config)
+        if host:
+            self.server_host = host
+        else:
+            server_config = config["server" if not testing else "server-testing"]
+            self.server_host = "{hostname}:{port}".format(**server_config)
 
         client_config = config["client" if not testing else "client-testing"]
         self.commit_interval = client_config.getfloat("commit_interval")
@@ -64,11 +67,12 @@ class ActivityWatchClient:
     def _url(self, endpoint: str):
         return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
 
-    def _log_request_exception(self, r: req.Response, e: req.RequestException):
+    def _log_request_exception(self, e: req.RequestException):
+        r = e.response
         logger.warning(str(e))
-        logger.warning("{} request response had status code {}".format(r.request.method, r.status_code))
         try:
-            logger.warning("Message: {}".format(r.status_code, r.json()))
+            json = r.json()
+            logger.warning("Error message received: {}".format(r.json()))
         except json.JSONDecodeError:
             pass
 
@@ -77,7 +81,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -87,7 +91,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -97,7 +101,7 @@ class ActivityWatchClient:
         try:
             r.raise_for_status()
         except req.RequestException as e:
-            self._log_request_exception(r, e)
+            self._log_request_exception(e)
             raise e
         return r
 
@@ -213,13 +217,17 @@ class ActivityWatchClient:
     #   Query (server-side transformation)
     #
 
-    def query(self, query: str, start: datetime, end: datetime, name="", cache: bool=False) -> Union[int, dict]:
+    def query(self, query: str, start: datetime, end: datetime, name: str=None, cache: bool=False) -> Union[int, dict]:
         endpoint = "query/"
-        params = {"start": str(start), "end": str(end), "name": name, "cache": int(cache)}
-        if not len(name) < 0 and cache:
-            raise Exception("You are not allowed to do caching without a query name")
+        params = {}  # type: Dict[str, Any]
+        if cache:
+            if not name:
+                raise Exception("You are not allowed to do caching without a query name")
+            params["name"] = name
+            params["cache"] = int(cache)
         data = {
-            'query': [query]
+            'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
+            'query': query.split("\n")
         }
         response = self._post(endpoint, data, params=params)
         if response.text.isdigit():
