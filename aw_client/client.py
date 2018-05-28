@@ -3,7 +3,7 @@ import logging
 import socket
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import namedtuple
 from typing import Optional, List, Any, Union, Dict
 
@@ -58,7 +58,7 @@ class ActivityWatchClient:
 
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
-        self.last_heartbeat = {} #type: dict
+        self.last_heartbeat = {}  # type: Dict[str, Event]
 
     #
     #   Get/Post base requests
@@ -85,7 +85,7 @@ class ActivityWatchClient:
             raise e
         return r
 
-    def _post(self, endpoint: str, data: Any, params: Optional[dict] = None) -> req.Response:
+    def _post(self, endpoint: str, data: Union[List[Any], Dict[str, Any]], params: Optional[dict] = None) -> req.Response:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
         r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
         try:
@@ -184,8 +184,7 @@ class ActivityWatchClient:
                 self.last_heartbeat[bucket_id] = event
             return None
         else:
-            return Event(**self._post(endpoint, data).json())
-
+            return Event(**self._post(endpoint, event.to_json_dict()).json())
 
     #
     #   Bucket get/post requests
@@ -291,11 +290,10 @@ class RequestQueue(threading.Thread):
         if not os.path.exists(queued_dir):
             os.makedirs(queued_dir)
 
-        persistqueue_path = os.path.join(queued_dir,
-            "{}{}.v{}.persistqueue".format(
-                self.client.name,
-                "-testing" if client.testing else "",
-                self.VERSION))
+        persistqueue_path = os.path.join(
+            queued_dir,
+            "{}{}.v{}.persistqueue".format(self.client.name, "-testing" if client.testing else "", self.VERSION)
+        )
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
         self._current = None  # type: Optional[QueuedRequest]
 
