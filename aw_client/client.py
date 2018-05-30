@@ -175,9 +175,9 @@ class ActivityWatchClient:
             last_heartbeat = self.last_heartbeat[bucket_id]
 
             merge = heartbeat_merge(last_heartbeat, event, pulsetime)
-            diff = (event.timestamp - last_heartbeat.timestamp).total_seconds()
+            diff = (event.timestamp - last_heartbeat.timestamp + event.duration).total_seconds()
             if merge:
-                if diff < self.commit_interval:
+                if diff > self.commit_interval:
                     data = last_heartbeat.to_json_dict()
                     self.request_queue.add_request(endpoint, data)
                 self.last_heartbeat[bucket_id] = merge
