@@ -14,10 +14,10 @@ default_client_config["server-testing"] = {
 }
 
 default_client_config["client"] = {
-    "commit_interval": "30",
+    "commit_interval": "10",
 }
 default_client_config["client-testing"] = {
-    "commit_interval": "10"
+    "commit_interval": "5"
 }
 
 
