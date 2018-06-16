@@ -158,13 +158,23 @@ class ActivityWatchClient:
         response = self._get(endpoint, params=params)
         return int(response.text)
 
-    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False) -> Optional[Event]:
-        """ This endpoint can use the failed requests retry queue.
-            This makes the request itself non-blocking and therefore
-            the function will in that case always returns None. """
+    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False, commit_interval: Optional[float]=None) -> Optional[Event]:
+        """
+        Args:
+            bucket_id: The bucket_id of the bucket to send the heartbeat to
+            event: The actual heartbeat event
+            pulsetime: The maximum amount of time in seconds since the last heartbeat to be merged with the previous heartbeat in aw-server
+            queued: Use the aw-client queue feature to queue events if client loses connection with the server
+            commit_interval: Override default pre-merge commit interval
+
+        NOTE: This endpoint can use the failed requests retry queue.
+              This makes the request itself non-blocking and therefore
+              the function will in that case always returns None.
+        """
 
         from aw_transform.heartbeats import heartbeat_merge
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
+        commit_interval = commit_interval if commit_interval else self.commit_interval
 
         if queued:
             # Pre-merge heartbeats
@@ -180,7 +190,7 @@ class ActivityWatchClient:
                 # If last_heartbeat becomes longer than commit_interval
                 # then commit, else cache merged.
                 diff = (last_heartbeat.duration).total_seconds()
-                if diff > self.commit_interval:
+                if diff > commit_interval:
                     data = merge.to_json_dict()
                     self.request_queue.add_request(endpoint, data)
                     self.last_heartbeat[bucket_id] = event
