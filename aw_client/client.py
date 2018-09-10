@@ -71,8 +71,8 @@ class ActivityWatchClient:
         r = e.response
         logger.warning(str(e))
         try:
-            json = r.json()
-            logger.warning("Error message received: {}".format(r.json()))
+            d = r.json()
+            logger.warning("Error message received: {}".format(d))
         except json.JSONDecodeError:
             pass
 
