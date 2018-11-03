@@ -5,7 +5,7 @@ import os
 import threading
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Union, Dict
+from typing import Optional, List, Any, Union, Dict, Tuple
 
 import requests as req
 import persistqueue
@@ -235,23 +235,37 @@ class ActivityWatchClient:
     #   Query (server-side transformation)
     #
 
-    def query(self, query: str, start: datetime, end: datetime, name: str=None, cache: bool=False) -> Union[int, dict]:
+    def query(self,
+              query: str,
+              start: datetime = None,
+              end: datetime = None,
+              name: str = None,
+              timeperiods: List[Tuple] = None,
+              cache: bool = False,
+              ) -> Union[List[Any], Any]:
+        # TODO: Detect if events are returned, and in that case turn them into proper Event objects
         endpoint = "query/"
         params = {}  # type: Dict[str, Any]
+        if not timeperiods:
+            timeperiods = [(start, end)]
+
         if cache:
             if not name:
                 raise Exception("You are not allowed to do caching without a query name")
             params["name"] = name
             params["cache"] = int(cache)
         data = {
-            'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
+            'timeperiods': ["/".join([t[0].isoformat(), t[1].isoformat()]) for t in timeperiods],
             'query': query.split("\n")
         }
         response = self._post(endpoint, data, params=params)
         if response.text.isdigit():
             return int(response.text)
         else:
-            return response.json()
+            if len(timeperiods) > 1:
+                return response.json()
+            else:
+                return response.json()[0]
 
     #
     #   Connect and disconnect
