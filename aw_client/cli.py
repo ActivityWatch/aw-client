@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 import json
 import argparse
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from pprint import pprint
 
 import aw_client
+from aw_core import Event
 
 
 def _valid_date(s):
@@ -16,7 +18,7 @@ def _valid_date(s):
 
 
 def main():
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     td1day = timedelta(days=1)
     td1yr = timedelta(days=365)
 
@@ -29,6 +31,8 @@ def main():
     parser_heartbeat = subparsers.add_parser('heartbeat', help='Send a heartbeat to the server')
     parser_heartbeat.set_defaults(which='heartbeat')
     parser_heartbeat.add_argument('--pulsetime', default=60, help='Pulsetime to use')
+    parser_heartbeat.add_argument('bucket', help='bucketname to send heartbeat to')
+    parser_heartbeat.add_argument('data', default="{}", help='JSON data to send in heartbeat')
 
     parser_buckets = subparsers.add_parser('buckets',
                                            help='List all buckets')
@@ -55,7 +59,9 @@ def main():
     client = aw_client.ActivityWatchClient(host=args.host)
 
     if args.which == "heartbeat":
-        raise NotImplementedError
+        e = Event(duration=0, data=json.loads(args.data), timestamp=now)
+        print(e)
+        client.heartbeat(args.bucket, e, args.pulsetime)
     elif args.which == "buckets":
         buckets = client.get_buckets()
         print("Buckets:")
