@@ -331,11 +331,8 @@ class RequestQueue(threading.Thread):
         self._persistqueue.task_done()
 
     def _create_buckets(self) -> None:
-        # Check if bucket exists
-        buckets = self.client.get_buckets()
         for bucket in self._registered_buckets:
-            if bucket.id not in buckets:
-                self.client.create_bucket(bucket.id, bucket.type)
+            self.client.create_bucket(bucket.id, bucket.type)
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
