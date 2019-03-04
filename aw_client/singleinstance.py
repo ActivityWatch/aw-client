@@ -1,7 +1,8 @@
 import sys
 import os
 import logging
-import fcntl
+if sys.platform != 'win32':
+    import fcntl
 
 from aw_core.dirs import get_cache_dir
 
