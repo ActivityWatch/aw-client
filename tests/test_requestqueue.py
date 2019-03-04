@@ -16,7 +16,7 @@ from aw_client.client import RequestQueue
 
 
 class MockClient:
-    name = "Mock"
+    client_name = "Mock"
 
     def __init__(self):
         self.testing = True

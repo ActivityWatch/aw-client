@@ -3,18 +3,19 @@ import logging
 import socket
 import os
 import threading
+import functools
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Union, Dict
+from typing import Optional, List, Any, Union, Dict, Callable
 
 import requests as req
 import persistqueue
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
-from aw_core.decorators import deprecated
 
 from .config import load_config
+from .singleinstance import SingleInstance
 
 
 # FIXME: This line is probably badly placed
@@ -22,38 +23,54 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def _log_request_exception(e: req.RequestException):
+    r = e.response
+    logger.warning(str(e))
+    try:
+        d = r.json()
+        logger.warning("Error message received: {}".format(d))
+    except json.JSONDecodeError:
+        pass
+
+
+def always_raise_for_request_errors(f: Callable[..., req.Response]):
+    @functools.wraps(f)
+    def g(*args, **kwargs):
+        r = f(*args, **kwargs)
+        try:
+            r.raise_for_status()
+        except req.RequestException as e:
+            _log_request_exception(e)
+            raise e
+        return r
+    return g
+
+
 class ActivityWatchClient:
-    """
-    A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
+    def __init__(self, client_name: str = "unknown", testing=False, host=None, port=None, protocol="http") -> None:
+        """
+        A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
 
-    Can be used with a `with`-statement as an alternative to manually calling connect and disconnect in a try-finally clause.
+        Can be used with a `with`-statement as an alternative to manually calling connect and disconnect in a try-finally clause.
 
-    :Example:
+        :Example:
 
-    .. literalinclude:: examples/client.py
-        :lines: 7-
-    """
-
-    def __init__(self, client_name: str="unknown", testing=False, host=None) -> None:
+        .. literalinclude:: examples/client.py
+            :lines: 7-
+        """
         self.testing = testing
 
-        # uses of the client_* variables is deprecated
         self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
-        # use these instead
-        self.name = self.client_name
-        self.hostname = self.client_hostname
+        client_config = load_config()["client" if not testing else "client-testing"]
 
-        config = load_config()
+        server_host = host or client_config["hostname"]
+        server_port = port or client_config["port"]
+        self.server_address = "{protocol}://{host}:{port}".format(protocol=protocol, host=server_host, port=server_port)
 
-        if host:
-            self.server_host = host
-        else:
-            server_config = config["server" if not testing else "server-testing"]
-            self.server_host = "{hostname}:{port}".format(**server_config)
+        self.instance = SingleInstance("{}-at-{}-on-{}".format(self.client_name, server_host, server_port))
 
-        client_config = config["client" if not testing else "client-testing"]
         self.commit_interval = client_config.getfloat("commit_interval")
 
         self.request_queue = RequestQueue(self)
@@ -65,45 +82,21 @@ class ActivityWatchClient:
     #
 
     def _url(self, endpoint: str):
-        return "http://{host}/api/0/{endpoint}".format(host=self.server_host, endpoint=endpoint)
+        return "{}/api/0/{}".format(self.server_address, endpoint)
 
-    def _log_request_exception(self, e: req.RequestException):
-        r = e.response
-        logger.warning(str(e))
-        try:
-            d = r.json()
-            logger.warning("Error message received: {}".format(d))
-        except json.JSONDecodeError:
-            pass
-
+    @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
-        r = req.get(self._url(endpoint), params=params)
-        try:
-            r.raise_for_status()
-        except req.RequestException as e:
-            self._log_request_exception(e)
-            raise e
-        return r
+        return req.get(self._url(endpoint), params=params)
 
+    @always_raise_for_request_errors
     def _post(self, endpoint: str, data: Union[List[Any], Dict[str, Any]], params: Optional[dict] = None) -> req.Response:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
-        r = req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
-        try:
-            r.raise_for_status()
-        except req.RequestException as e:
-            self._log_request_exception(e)
-            raise e
-        return r
+        return req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
 
+    @always_raise_for_request_errors
     def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
         headers = {"Content-type": "application/json"}
-        r = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
-        try:
-            r.raise_for_status()
-        except req.RequestException as e:
-            self._log_request_exception(e)
-            raise e
-        return r
+        return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
@@ -218,8 +211,8 @@ class ActivityWatchClient:
         else:
             endpoint = "buckets/{}".format(bucket_id)
             data = {
-                'client': self.name,
-                'hostname': self.hostname,
+                'client': self.client_name,
+                'hostname': self.client_hostname,
                 'type': event_type,
             }
             self._post(endpoint, data)
@@ -227,7 +220,7 @@ class ActivityWatchClient:
     def delete_bucket(self, bucket_id: str):
         self._delete('buckets/{}'.format(bucket_id))
 
-    @deprecated
+    # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
 
@@ -311,7 +304,7 @@ class RequestQueue(threading.Thread):
 
         persistqueue_path = os.path.join(
             queued_dir,
-            "{}{}.v{}.persistqueue".format(self.client.name, "-testing" if client.testing else "", self.VERSION)
+            "{}{}.v{}.persistqueue".format(self.client.client_name, "-testing" if client.testing else "", self.VERSION)
         )
         self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
         self._current = None  # type: Optional[QueuedRequest]

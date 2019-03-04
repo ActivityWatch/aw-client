@@ -8,6 +8,7 @@ from requests.exceptions import HTTPError
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
 
+
 def create_unique_event():
     return Event(
         timestamp=datetime.now(timezone.utc),
@@ -15,37 +16,50 @@ def create_unique_event():
         data={"label": str(random())}
     )
 
-client = ActivityWatchClient("aw-test-client", testing=True)
-client.connect()
 
+client_name = "aw-test-client"
 bucket_name = "test-bucket"
 bucket_etype = "test"
-# Delete bucket before creating it, and handle error if it doesn't already exist
-try:
+
+# Test context manager
+with ActivityWatchClient(client_name, testing=True) as client:
+    time.sleep(1)
+
+    # Check that client name is set correctly
+    assert client.client_name == client_name
+
+    # Delete bucket before creating it, and handle error if it doesn't already exist
+    try:
+        client.delete_bucket(bucket_name)
+    except HTTPError as e:
+        pass
+
+    # Create bucket
+    client.create_bucket(bucket_name, bucket_etype)
+
+    # Check bucket
+    buckets = client.get_buckets()
+    assert bucket_name in buckets
+    assert bucket_name == buckets[bucket_name]['id']
+    assert bucket_etype == buckets[bucket_name]['type']
+
+    # Insert events
+    e1 = create_unique_event()
+    e2 = create_unique_event()
+    e3 = create_unique_event()
+    events = [e1, e2, e3]
+    client.insert_events(bucket_name, events)
+
+    # Get events
+    fetched_events = client.get_events(bucket_name, limit=len(events))
+
+    # Assert events
+    assert fetched_events == events
+    assert events[0]['data']['label'] == e1['data']['label']
+
+    # Check eventcount
+    eventcount = client.get_eventcount(bucket_name)
+    assert eventcount == 1
+
+    # Delete bucket
     client.delete_bucket(bucket_name)
-except HTTPError as e:
-    pass
-client.create_bucket(bucket_name, bucket_etype)
-
-e1 = create_unique_event()
-client.insert_event(bucket_name, e1)
-
-print("Getting events")
-events = client.get_events(bucket_name)
-
-print("Asserting events")
-assert events[0]['data']['label'] == e1['data']['label']
-
-print("Getting eventcount")
-eventcount = client.get_eventcount(bucket_name)
-assert eventcount == 1
-
-print("Getting bucket")
-buckets = client.get_buckets()
-print("Asserting bucket")
-assert bucket_name in buckets
-assert bucket_name == buckets[bucket_name]['id']
-assert bucket_etype == buckets[bucket_name]['type']
-
-with ActivityWatchClient("yet-another-client", testing=True) as client:
-    assert client.name == "yet-another-client"
