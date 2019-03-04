@@ -63,10 +63,12 @@ class ActivityWatchClient:
         self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
-        client_config = load_config()["client" if not testing else "client-testing"]
+        _config = load_config()
+        server_config = _config["server" if not testing else "server-testing"]
+        client_config = _config["client" if not testing else "client-testing"]
 
-        server_host = host or client_config["hostname"]
-        server_port = port or client_config["port"]
+        server_host = host or server_config["hostname"]
+        server_port = port or server_config["port"]
         self.server_address = "{protocol}://{host}:{port}".format(protocol=protocol, host=server_host, port=server_port)
 
         self.instance = SingleInstance("{}-at-{}-on-{}".format(self.client_name, server_host, server_port))
