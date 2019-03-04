@@ -3,41 +3,63 @@ import time
 
 from random import random
 from datetime import datetime, timedelta, timezone
+from requests.exceptions import HTTPError
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
 
+
 def create_unique_event():
-    return Event(data={"label": str(random())}, timestamp=datetime.now(timezone.utc), duration=timedelta())
+    return Event(
+        timestamp=datetime.now(timezone.utc),
+        duration=timedelta(),
+        data={"label": str(random())}
+    )
 
-client = ActivityWatchClient("aw-test-client", testing=True)
 
+client_name = "aw-test-client"
 bucket_name = "test-bucket"
 bucket_etype = "test"
-client.setup_bucket(bucket_name, bucket_etype)
 
-client.connect()
-time.sleep(1)
+# Test context manager
+with ActivityWatchClient(client_name, testing=True) as client:
+    time.sleep(1)
 
-e1 = create_unique_event()
-e2 = create_unique_event()
-e3 = create_unique_event()
-events = [e1, e2, e3]
-client.send_events(bucket_name, events)
+    # Check that client name is set correctly
+    assert client.client_name == client_name
 
-print("Getting events")
-fetched_events = client.get_events(bucket_name, limit=len(events))
+    # Delete bucket before creating it, and handle error if it doesn't already exist
+    try:
+        client.delete_bucket(bucket_name)
+    except HTTPError as e:
+        pass
 
-print("Asserting events")
-print(fetched_events)
-print(events)
-assert fetched_events == events
+    # Create bucket
+    client.create_bucket(bucket_name, bucket_etype)
 
-print("Getting bucket")
-buckets = client.get_buckets()
-print("Asserting bucket")
-assert bucket_name in buckets
-assert bucket_name == buckets[bucket_name]['id']
-assert bucket_etype == buckets[bucket_name]['type']
+    # Check bucket
+    buckets = client.get_buckets()
+    assert bucket_name in buckets
+    assert bucket_name == buckets[bucket_name]['id']
+    assert bucket_etype == buckets[bucket_name]['type']
 
-client.delete_bucket(bucket_name)
+    # Insert events
+    e1 = create_unique_event()
+    e2 = create_unique_event()
+    e3 = create_unique_event()
+    events = [e1, e2, e3]
+    client.insert_events(bucket_name, events)
+
+    # Get events
+    fetched_events = client.get_events(bucket_name, limit=len(events))
+
+    # Assert events
+    assert fetched_events == events
+    assert events[0]['data']['label'] == e1['data']['label']
+
+    # Check eventcount
+    eventcount = client.get_eventcount(bucket_name)
+    assert eventcount == 1
+
+    # Delete bucket
+    client.delete_bucket(bucket_name)

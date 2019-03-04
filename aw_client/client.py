@@ -2,14 +2,14 @@ import json
 import logging
 import socket
 import os
-import time
 import threading
+import functools
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any
-from queue import Queue
+from typing import Optional, List, Any, Union, Dict, Callable
 
 import requests as req
+import persistqueue
 
 from aw_core.models import Event
 from aw_core.dirs import get_data_dir
@@ -23,94 +23,180 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+def _log_request_exception(e: req.RequestException):
+    r = e.response
+    logger.warning(str(e))
+    try:
+        d = r.json()
+        logger.warning("Error message received: {}".format(d))
+    except json.JSONDecodeError:
+        pass
+
+
+def always_raise_for_request_errors(f: Callable[..., req.Response]):
+    @functools.wraps(f)
+    def g(*args, **kwargs):
+        r = f(*args, **kwargs)
+        try:
+            r.raise_for_status()
+        except req.RequestException as e:
+            _log_request_exception(e)
+            raise e
+        return r
+    return g
+
+
 class ActivityWatchClient:
-    def __init__(self, client_name: str, testing=False, server_host=None, server_port=None) -> None:
+    def __init__(self, client_name: str = "unknown", testing=False, host=None, port=None, protocol="http") -> None:
+        """
+        A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
+
+        Can be used with a `with`-statement as an alternative to manually calling connect and disconnect in a try-finally clause.
+
+        :Example:
+
+        .. literalinclude:: examples/client.py
+            :lines: 7-
+        """
         self.testing = testing
 
-        self.buckets = []  # type: List[Dict[str, str]]
-        # self.session = {}
-
-        self.client_name = client_name + ("-testing" if testing else "")
+        self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
-        client_config = load_config()
-        configsection = "server" if not testing else "server-testing"
+        client_config = load_config()["client" if not testing else "client-testing"]
 
-        self.server_host = server_host if server_host != None else client_config[configsection]["hostname"]
-        self.server_port = server_port if server_port != None else client_config[configsection]["port"]
+        server_host = host or client_config["hostname"]
+        server_port = port or client_config["port"]
+        self.server_address = "{protocol}://{host}:{port}".format(protocol=protocol, host=server_host, port=server_port)
 
-        self.instance = SingleInstance("{}-at-{}:{}".format(self.client_name, self.server_host, self.server_port))
+        self.instance = SingleInstance("{}-at-{}-on-{}".format(self.client_name, server_host, server_port))
 
-        self.dispatch_thread = PostDispatchThread(self)
+        self.commit_interval = client_config.getfloat("commit_interval")
+
+        self.request_queue = RequestQueue(self)
+        # Dict of each last heartbeat in each bucket
+        self.last_heartbeat = {}  # type: Dict[str, Event]
 
     #
     #   Get/Post base requests
     #
 
     def _url(self, endpoint: str):
-        return "http://{}:{}/api/0/{}".format(self.server_host, self.server_port, endpoint)
+        return "{}/api/0/{}".format(self.server_address, endpoint)
 
-    def _get(self, endpoint: str, params=None) -> Optional[req.Response]:
-        response = req.get(self._url(endpoint), params=params)
-        response.raise_for_status()
-        return response
+    @always_raise_for_request_errors
+    def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
+        return req.get(self._url(endpoint), params=params)
 
-    def _post(self, endpoint: str, data: Any) -> Optional[req.Response]:
+    @always_raise_for_request_errors
+    def _post(self, endpoint: str, data: Union[List[Any], Dict[str, Any]], params: Optional[dict] = None) -> req.Response:
+        headers = {"Content-type": "application/json", "charset": "utf-8"}
+        return req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
+
+    @always_raise_for_request_errors
+    def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
         headers = {"Content-type": "application/json"}
-        response = req.post(self._url(endpoint), data=json.dumps(data), headers=headers)
-        response.raise_for_status()
-        return response
-
-    def _delete(self, endpoint: str, data: Any = {}) -> Optional[req.Response]:
-        headers = {"Content-type": "application/json"}
-        response = req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
-        response.raise_for_status()
-        return response
+        return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
-        endpoint = "info/"
+        endpoint = "info"
         return self._get(endpoint).json()
 
     #
     #   Event get/post requests
     #
 
-    def get_events(self, bucket: str, limit: int=None, start: datetime=None, end: datetime=None) -> List[Event]:
-        endpoint = "buckets/{}/events".format(bucket)
+    def get_events(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> List[Event]:
+        endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
-        if limit:
+        if limit is not None:
             params["limit"] = str(limit)
-        if start:
+        if start is not None:
             params["start"] = start.isoformat()
-        if end:
+        if end is not None:
             params["end"] = end.isoformat()
 
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
 
-    def send_event(self, bucket: str, event: Event):
-        endpoint = "buckets/{}/events".format(bucket)
-        data = event.to_json_dict()
-        return self._post(endpoint, data)
+    # @deprecated  # use insert_event instead
+    def send_event(self, bucket_id: str, event: Event):
+        return self.insert_event(bucket_id, event)
 
-    def send_events(self, bucket: str, events: List[Event]):
-        endpoint = "buckets/{}/events".format(bucket)
+    # @deprecated  # use insert_events instead
+    def send_events(self, bucket_id: str, events: List[Event]):
+        return self.insert_events(bucket_id, events)
+
+    def insert_event(self, bucket_id: str, event: Event) -> Event:
+        endpoint = "buckets/{}/events".format(bucket_id)
+        data = event.to_json_dict()
+        return Event(**self._post(endpoint, data).json())
+
+    def insert_events(self, bucket_id: str, events: List[Event]) -> None:
+        endpoint = "buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict() for event in events]
-        return self._post(endpoint, data)
+        self._post(endpoint, data)
 
-    def heartbeat(self, bucket, event: Event, pulsetime: float, queued=False) -> Optional[Event]:
-        """ This endpoint can use the failed requests retry queue.
-            This makes the request itself non-blocking and therefore
-            the function will in that case always returns None. """
+    def get_eventcount(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> int:
+        endpoint = "buckets/{}/events/count".format(bucket_id)
 
-        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket, pulsetime)
-        data = event.to_json_dict()
+        params = dict()  # type: Dict[str, str]
+        if start is not None:
+            params["start"] = start.isoformat()
+        if end is not None:
+            params["end"] = end.isoformat()
+
+        response = self._get(endpoint, params=params)
+        return int(response.text)
+
+    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False, commit_interval: Optional[float]=None) -> Optional[Event]:
+        """
+        Args:
+            bucket_id: The bucket_id of the bucket to send the heartbeat to
+            event: The actual heartbeat event
+            pulsetime: The maximum amount of time in seconds since the last heartbeat to be merged with the previous heartbeat in aw-server
+            queued: Use the aw-client queue feature to queue events if client loses connection with the server
+            commit_interval: Override default pre-merge commit interval
+
+        NOTE: This endpoint can use the failed requests retry queue.
+              This makes the request itself non-blocking and therefore
+              the function will in that case always returns None.
+        """
+
+        from aw_transform.heartbeats import heartbeat_merge
+        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
+        commit_interval = commit_interval if commit_interval else self.commit_interval
+
         if queued:
-            self.dispatch_thread.add_request(endpoint, data)
+            # Pre-merge heartbeats
+            if bucket_id not in self.last_heartbeat:
+                self.last_heartbeat[bucket_id] = event
+                return None
+
+            last_heartbeat = self.last_heartbeat[bucket_id]
+
+            merge = heartbeat_merge(last_heartbeat, event, pulsetime)
+
+            if merge:
+                # If last_heartbeat becomes longer than commit_interval
+                # then commit, else cache merged.
+                diff = (last_heartbeat.duration).total_seconds()
+                if diff > commit_interval:
+                    data = merge.to_json_dict()
+                    self.request_queue.add_request(endpoint, data)
+                    self.last_heartbeat[bucket_id] = event
+                else:
+                    self.last_heartbeat[bucket_id] = merge
+            else:
+                data = last_heartbeat.to_json_dict()
+                self.request_queue.add_request(endpoint, data)
+                self.last_heartbeat[bucket_id] = event
+
+            return None
         else:
-            return Event(**self._post(endpoint, data).json())
+            return Event(**self._post(endpoint, event.to_json_dict()).json())
 
     #
     #   Bucket get/post requests
@@ -119,149 +205,183 @@ class ActivityWatchClient:
     def get_buckets(self):
         return self._get('buckets/').json()
 
-    def create_bucket(self, bucket_id: str, event_type: str):
-        endpoint = "buckets/{}".format(bucket_id)
-        data = {
-            'client': self.client_name,
-            'hostname': self.client_hostname,
-            'type': event_type,
-        }
-        self._post(endpoint, data)
+    def create_bucket(self, bucket_id: str, event_type: str, queued=False):
+        if queued:
+            self.request_queue.register_bucket(bucket_id, event_type)
+        else:
+            endpoint = "buckets/{}".format(bucket_id)
+            data = {
+                'client': self.client_name,
+                'hostname': self.client_hostname,
+                'type': event_type,
+            }
+            self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str):
         self._delete('buckets/{}'.format(bucket_id))
 
+    # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
-        self.buckets.append({"bid": bucket_id, "etype": event_type})
-
-    def _create_buckets(self):
-        # Check if bucket exists
-        buckets = self.get_buckets()
-        for bucket in self.buckets:
-            if bucket['bid'] in buckets:
-                return False  # Don't do anything if bucket already exists
-            else:
-                self.create_bucket(bucket['bid'], bucket['etype'])
-                return True
+        self.create_bucket(bucket_id, event_type, queued=True)
 
     #
-    #   Connection methods
+    #   Query (server-side transformation)
     #
+
+    def query(self, query: str, start: datetime, end: datetime, name: str=None, cache: bool=False) -> Union[int, dict]:
+        endpoint = "query/"
+        params = {}  # type: Dict[str, Any]
+        if cache:
+            if not name:
+                raise Exception("You are not allowed to do caching without a query name")
+            params["name"] = name
+            params["cache"] = int(cache)
+        data = {
+            'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
+            'query': query.split("\n")
+        }
+        response = self._post(endpoint, data, params=params)
+        if response.text.isdigit():
+            return int(response.text)
+        else:
+            return response.json()
+
+    #
+    #   Connect and disconnect
+    #
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
 
     def connect(self):
-        if not self.dispatch_thread.is_alive():
-            self.dispatch_thread.start()
+        if not self.request_queue.is_alive():
+            self.request_queue.start()
 
     def disconnect(self):
-        # FIXME: doesn't disconnect immediately
-        self.dispatch_thread.running = False
+        self.request_queue.stop()
+        self.request_queue.join()
+
+        # Throw away old thread object, create new one since same thread cannot be started twice
+        self.request_queue = RequestQueue(self)
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
+Bucket = namedtuple("Bucket", ["id", "type"])
 
 
-class PostDispatchThread(threading.Thread):
-    def __init__(self, client, dispatch_interval=0):
+class RequestQueue(threading.Thread):
+    """Used to asynchronously send heartbeats.
+
+    Handles:
+        - Cases where the server is temporarily unavailable
+        - Saves all queued requests to file in case of a server crash
+    """
+
+    VERSION = 1  # update this whenever the queue-file format changes
+
+    def __init__(self, client: ActivityWatchClient) -> None:
         threading.Thread.__init__(self, daemon=True)
-        self.running = True
-        self.connected = False
-
-        # Time to wait between dispatching events, useful for throttling.
-        self.dispatch_interval = dispatch_interval
 
         self.client = client
-        self._queue = Queue()
+
+        self.connected = False
+        self._stop_event = threading.Event()
+
+        # Buckets that will have events queued to them, will be created if they don't exist
+        self._registered_buckets = []  # type: List[Bucket]
+
+        self._attempt_reconnect_interval = 10
 
         # Setup failed queues file
         data_dir = get_data_dir("aw-client")
-        failed_queues_dir = os.path.join(data_dir, "failed_requests")
-        if not os.path.exists(failed_queues_dir):
-            os.makedirs(failed_queues_dir)
-        self.queue_file = os.path.join(failed_queues_dir, self.client.client_name)
+        queued_dir = os.path.join(data_dir, "queued")
+        if not os.path.exists(queued_dir):
+            os.makedirs(queued_dir)
 
-    def _queue_to_file(self, endpoint: str, data: dict):
-        entry = QueuedRequest(endpoint=endpoint, data=data)
-        with open(self.queue_file, "a+") as queue_fp:
-            queue_fp.write(json.dumps(entry) + "\n")
+        persistqueue_path = os.path.join(
+            queued_dir,
+            "{}{}.v{}.persistqueue".format(self.client.client_name, "-testing" if client.testing else "", self.VERSION)
+        )
+        self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
+        self._current = None  # type: Optional[QueuedRequest]
 
-    def _load_queue(self):
-        # If crash when lost connection, queue failed requests
-        failed_requests = []  # type: List[QueuedRequests]
+    def _get_next(self) -> Optional[QueuedRequest]:
+        # self._current will always hold the next not-yet-sent event,
+        # until self._task_done() is called.
+        if not self._current:
+            try:
+                self._current = self._persistqueue.get(block=False)
+            except persistqueue.exceptions.Empty:
+                return None
+        return self._current
 
-        # Load failed events from queue into failed_requests
-        open(self.queue_file, "a").close()  # Create file if doesn't exist
-        with open(self.queue_file, "r") as queue_fp:
-            for request in queue_fp:
-                logger.debug(request)
-                try:
-                    failed_requests.append(QueuedRequest(*json.loads(request)))
-                except json.decoder.JSONDecodeError as e:
-                    logger.error(e, exc_info=True)
-                    logger.error("Request that failed: {}".format(request))
-                    logger.warning("Skipping request that failed to load")
+    def _task_done(self) -> None:
+        self._current = None
+        self._persistqueue.task_done()
 
-        # Insert failed_requests into dispatching queue
-        # FIXME: We really shouldn't be clearing the file here until the events have been sent to server.
-        open(self.queue_file, "w").close()  # Clear file
-        if len(failed_requests) > 0:
-            for request in failed_requests:
-                self._queue.put(request)
-            logger.info("Loaded {} failed requests from queuefile".format(len(failed_requests)))
-
-    def _save_queue(self):
-        # When lost connection, save queue to file for later sending
-        with open(self.queue_file, "w") as queue_fp:
-            while not self._queue.empty():
-                # The `block=False` and `if request is not None` stuff here is actually required, see Python docs.
-                request = self._queue.get(block=False)
-                if request is not None:
-                    queue_fp.write(json.dumps(request) + "\n")
+    def _create_buckets(self) -> None:
+        for bucket in self._registered_buckets:
+            self.client.create_bucket(bucket.id, bucket.type)
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
-            self.client._create_buckets()
-            return True
+            self._create_buckets()
+            self.connected = True
+            logger.info("Connection to aw-server established by {}".format(self.client.client_name))
         except req.RequestException:
-            return False
+            self.connected = False
 
-    # TODO: Handle SIGTERM/keyboard interrupt gracefully by saving to file first
-    # FIXME: Turns out this is a really bad idea, it's probably better if the
-    # entire program crashes should this thread crash. That way we can at least
-    # detect errors by detecting crashes in aw-qt. I just lost a day of data due
-    # to this, caused by "no space left on device" that corrupted the file.
-    # Bad state should be handled with precision, not with shit like this.
-    # @restart_on_exception
-    def run(self):
-        while self.running:
+        return self.connected
+
+    def wait(self, seconds) -> bool:
+        return self._stop_event.wait(seconds)
+
+    def should_stop(self) -> bool:
+        return self._stop_event.is_set()
+
+    def _dispatch_request(self) -> None:
+        request = self._get_next()
+        if not request:
+            self.wait(0.1)  # seconds to wait before re-polling the empty queue
+            return
+
+        try:
+            self.client._post(request.endpoint, request.data)
+        except req.RequestException as e:
+            self.connected = False
+            logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
+            return
+
+        self._task_done()
+
+    def run(self) -> None:
+        self._stop_event.clear()
+        while not self.should_stop():
             # Connect
-            while not self.connected and self.running:
-                self.connected = self._try_connect()
-                if self.connected:
-                    logger.info("Connection to aw-server established")
-                else:
-                    time.sleep(10)
+            while not self._try_connect():
+                logger.warning("Not connected to server, {} requests in queue".format(self._persistqueue.qsize()))
+                if self.wait(self._attempt_reconnect_interval):
+                    break
 
-            # Load requests from queuefile
-            self._load_queue()
+            # Dispatch requests until connection is lost or thread should stop
+            while self.connected and not self.should_stop():
+                self._dispatch_request()
 
-            # Dispatch requests to server
-            while self.connected and self.running:
-                time.sleep(self.dispatch_interval)
-                request = self._queue.get()
-                try:
-                    self.client._post(request.endpoint, request.data)
-                except req.RequestException as e:
-                    self._queue.queue.appendleft(request)
-                    self.connected = False
-                    logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
-                    logger.warning(e)
-                    time.sleep(1)
+    def stop(self) -> None:
+        self._stop_event.set()
 
-            # Disconnected or self.running set to false, save remaining to queuefile
-            self._save_queue()
+    def add_request(self, endpoint: str, data: dict) -> None:
+        """
+        Add a request to the queue.
+        NOTE: Only supports heartbeats
+        """
+        assert "/heartbeat" in endpoint
+        assert isinstance(data, dict)
+        self._persistqueue.put(QueuedRequest(endpoint, data))
 
-    def add_request(self, endpoint, data):
-        if self.connected:
-            self._queue.put(QueuedRequest(endpoint=endpoint, data=data))
-        else:
-            self._queue_to_file(endpoint, data)
+    def register_bucket(self, bucket_id: str, event_type: str) -> None:
+        self._registered_buckets.append(Bucket(bucket_id, event_type))
