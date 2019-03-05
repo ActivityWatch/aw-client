@@ -4,11 +4,11 @@ import aw_core.config
 
 default_client_config = ConfigParser()
 default_client_config["server"] = {
-    "hostname": "localhost",
+    "hostname": "127.0.0.1",
     "port": "5600",
 }
 default_client_config["server-testing"] = {
-    "hostname": "localhost",
+    "hostname": "127.0.0.1",
     "port": "5666"
 }
 
