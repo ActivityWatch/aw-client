@@ -226,6 +226,18 @@ class ActivityWatchClient:
     def setup_bucket(self, bucket_id: str, event_type: str):
         self.create_bucket(bucket_id, event_type, queued=True)
 
+    # Import & export
+
+    def export_all(self) -> dict:
+        return self._get('export').json()
+
+    def export_bucket(self, bucket_id) -> dict:
+        return self._get('buckets/{}/export'.format(bucket_id)).json()
+
+    def import_bucket(self, bucket: dict) -> None:
+        endpoint = "import"
+        self._post(endpoint, {"buckets": {bucket["id"]: bucket}})
+
     #
     #   Query (server-side transformation)
     #
