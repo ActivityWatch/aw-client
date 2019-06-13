@@ -24,7 +24,7 @@ def main():
 
     parser = argparse.ArgumentParser(prog="aw-cli", description='A CLI utility for interacting with ActivityWatch.')
     parser.set_defaults(which='none')
-    parser.add_argument('--host', default="localhost:5600", help="Host to use, on the format HOSTNAME:PORT")
+    parser.add_argument('--host', default="localhost:5600", help="Host to use, in the format HOSTNAME[:PORT]")
 
     subparsers = parser.add_subparsers(help='sub-command help')
 
@@ -56,7 +56,10 @@ def main():
     args = parser.parse_args()
     # print("Args: {}".format(args))
 
-    client = aw_client.ActivityWatchClient(host=args.host)
+    client = aw_client.ActivityWatchClient(
+        host=args.host.split(':')[0],
+        port=(args.host.split(':')[1] if
+              (len(args.host.split(':')) > 1) else 5600))
 
     if args.which == "heartbeat":
         e = Event(duration=0, data=json.loads(args.data), timestamp=now)
