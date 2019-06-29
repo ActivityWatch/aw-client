@@ -96,6 +96,11 @@ class ActivityWatchClient:
         return req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
 
     @always_raise_for_request_errors
+    def _put(self, endpoint: str, data: Any = dict()) -> req.Response:
+        headers = {"Content-type": "application/json"}
+        return req.put(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers)
+
+    @always_raise_for_request_errors
     def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
         headers = {"Content-type": "application/json"}
         return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
@@ -140,6 +145,11 @@ class ActivityWatchClient:
         endpoint = "buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
+
+    def replace_event(self, bucket_id: str, event_id: int, event: Event) -> Event:
+        endpoint = "buckets/{}/events/{}".format(bucket_id, event_id)
+        data = event.to_json_dict()
+        return Event(**self._put(endpoint, data).json())
 
     def get_eventcount(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> int:
         endpoint = "buckets/{}/events/count".format(bucket_id)
