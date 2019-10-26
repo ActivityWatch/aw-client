@@ -109,7 +109,7 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> List[Event]:
+    def get_events(self, bucket_id: str, limit: int=-1, start: datetime=None, end: datetime=None) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
@@ -141,7 +141,7 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
-    def get_eventcount(self, bucket_id: str, limit: int=100, start: datetime=None, end: datetime=None) -> int:
+    def get_eventcount(self, bucket_id: str, limit: int=-1, start: datetime=None, end: datetime=None) -> int:
         endpoint = "buckets/{}/events/count".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
