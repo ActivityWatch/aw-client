@@ -59,7 +59,8 @@ def main():
 
     client = aw_client.ActivityWatchClient(
         host=args.host.split(':')[0],
-        port=int((args.host.split(':')[1:] or [5600 if not args.testing else 5666])[0]))
+        port=int((args.host.split(':')[1:] + [5600 if not args.testing else 5666]).pop())
+    )
 
     if args.which == "heartbeat":
         e = Event(duration=0, data=json.loads(args.data), timestamp=now)
