@@ -1,13 +1,13 @@
 .PHONY: build test typecheck clean
 
-pip_install_args := . -r requirements.txt
-
 ifdef DEV
-pip_install_args := --editable $(pip_install_args)
+installcmd := poetry install
+else
+installcmd := pip install .
 endif
 
 build:
-	pip3 install $(pip_install_args)
+	$(installcmd)
 
 test:
 	python3 -c "import aw_client"
