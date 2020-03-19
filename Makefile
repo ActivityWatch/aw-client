@@ -1,13 +1,7 @@
 .PHONY: build test typecheck clean
 
-ifdef DEV
-installcmd := poetry install
-else
-installcmd := pip3 install .
-endif
-
 build:
-	$(installcmd)
+	poetry install
 
 test:
 	python3 -c "import aw_client"

@@ -3,7 +3,7 @@ python:
  - "3.6"
 
 before_install:
- - "pip install mypy"
+ - "pip install poetry"
 
 install:
  - "make build"
