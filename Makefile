@@ -4,7 +4,7 @@ build:
 	poetry install
 
 test:
-	python3 -c "import aw_client"
+	python -c "import aw_client"
 	pytest -s -vv tests/test_requestqueue.py
 
 typecheck:
