@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import aw_client
 from aw_transform.filter_period_intersect import _intersecting_eventpairs
 
@@ -14,10 +16,14 @@ def main():
     dest_events = aw.get_events(dest_id)
     print(f"✓ dest events: {len(dest_events)}")
 
-    print("Checking overlap")
+    print("Checking overlap...")
     overlaps = list(_intersecting_eventpairs(src_events, dest_events))
     if overlaps:
-        print("Buckets had overlap, can't safely merge")
+        total_duration_src = sum((e.duration for e in src_events), timedelta())
+        total_overlap = sum((tp.duration for _, _, tp in overlaps), timedelta())
+        print(
+            f"Buckets had overlap ({total_overlap} out of {total_duration_src}), can't safely merge, exiting."
+        )
         exit(1)
     print("No overlap detected, continuing...")
 
