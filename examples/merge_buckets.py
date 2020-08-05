@@ -5,9 +5,20 @@ from aw_transform.filter_period_intersect import _intersecting_eventpairs
 
 
 def main():
+    """
+    Inserts all events from one bucket into another bucket, after checking for
+    overlap (which you shouldn't have if it was caused by a changing hostname).
+
+    Useful to fix duplicate buckets caused by a changing hostname, as in this issue:
+      https://github.com/ActivityWatch/activitywatch/issues/454
+    """
+
+    # You need to set testing=False if you're going to run this on your normal instance
     aw = aw_client.ActivityWatchClient(testing=True)
+
     buckets = aw.get_buckets()
     print(f"Buckets: {buckets.keys()}")
+
     src_id = input("Source bucket ID: ")
     dest_id = input("Destination bucket ID: ")
 
@@ -37,21 +48,13 @@ def main():
         print("Aborting")
         exit(1)
 
-    # src_b = buckets[src_id]
-    # dest_b = buckets[dest_id]
-    # print(src_b)
-    # print(dest_b)
-
     print("Inserting source events into destination bucket...")
-    # print("SKIPPING DUE TO BROKEN OVERLAP CHECK")
     aw.insert_events(dest_id, src_events)
 
     print("Operation complete")
     if input("Do you want to delete the source bucket? (y/n): ") == "y":
-        print("Deleting source bucket")
-        print("SKIPPING DUE TO BROKEN OVERLAP CHECK")
-        # aw.delete_bucket(src_id)
-        # print("Bucket deleted")
+        aw.delete_bucket(src_id)
+        print("Bucket deleted")
 
     print("Exiting")
 
