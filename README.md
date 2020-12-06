@@ -1,7 +1,10 @@
 aw-client
 =========
 
-[![Build Status](https://travis-ci.org/ActivityWatch/aw-client.svg?branch=master)](https://travis-ci.org/ActivityWatch/aw-client)
+[![GitHub Actions badge](https://github.com/ActivityWatch/aw-client/workflows/Build/badge.svg)](https://github.com/ActivityWatch/aw-client/actions)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Typechecking: Mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
+
 
 [**Documentation**](https://activitywatch.readthedocs.io/en/latest/)
 
