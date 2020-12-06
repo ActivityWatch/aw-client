@@ -31,3 +31,4 @@ The `examples/` directory contains a couple of example scripts, including:
 
  - `time_spent_today.py` - fetches all non-afk events and sums their duration to get the total active time for the day.
  - `merge_buckets.py` - merges two buckets with non-intersecting events by moving all events from one into the other.
+ - `redact_sensitive.py` - redact sensitive events.
