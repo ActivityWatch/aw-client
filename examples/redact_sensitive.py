@@ -24,7 +24,7 @@ DRYRUN = True
 
 def main():
     global DRYRUN
-    if '--wet' in sys.argv:
+    if "--wet" in sys.argv:
         DRYRUN = False
 
     global aw
@@ -37,12 +37,12 @@ def main():
     bid_to_redact = input(
         "In which bucket are the events you want to redact? (* for all): "
     )
-    assert bid_to_redact == "*" or bid_to_redact in buckets, 'Not a valid option'
+    assert bid_to_redact == "*" or bid_to_redact in buckets, "Not a valid option"
 
     regex_or_string = input(
         "Do you want to search by regex or string? (regex/string): "
     )
-    assert regex_or_string in ["regex", "string"], 'Not a valid option'
+    assert regex_or_string in ["regex", "string"], "Not a valid option"
 
     print("\nNOTE: Matching is not case sensitive!")
     pattern: Union[str, Pattern]
@@ -86,7 +86,7 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
     yes_redact = input(
         f"Do you want to replace all the matching strings with '{REDACTED}'? (y/N): "
     )
-    if yes_redact == 'y':
+    if yes_redact == "y":
         for e in events:
             if e.id in sensitive_ids:
                 e_before = e

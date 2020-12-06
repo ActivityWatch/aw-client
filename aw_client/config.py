@@ -7,17 +7,12 @@ default_client_config["server"] = {
     "hostname": "127.0.0.1",
     "port": "5600",
 }
-default_client_config["server-testing"] = {
-    "hostname": "127.0.0.1",
-    "port": "5666"
-}
+default_client_config["server-testing"] = {"hostname": "127.0.0.1", "port": "5666"}
 
 default_client_config["client"] = {
     "commit_interval": "10",
 }
-default_client_config["client-testing"] = {
-    "commit_interval": "5"
-}
+default_client_config["client-testing"] = {"commit_interval": "5"}
 
 
 def load_config():

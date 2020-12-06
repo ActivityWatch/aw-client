@@ -9,6 +9,7 @@ with confidence, and I need some of that right now.
 
 from time import sleep
 from logging import basicConfig, DEBUG
+
 basicConfig(level=DEBUG)
 
 import requests

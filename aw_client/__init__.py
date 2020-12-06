@@ -1,2 +1,1 @@
-from .client import ActivityWatchClient # noqa
-
+from .client import ActivityWatchClient  # noqa
