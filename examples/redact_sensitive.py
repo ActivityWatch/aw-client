@@ -126,8 +126,8 @@ def _redact_event(e: Event, pattern: Union[str, Pattern]) -> Event:
     return e
 
 
-def _find_sensitive(el: List[Event], pattern: Union[str, Pattern]) -> Set[int]:
-    sensitive_ids: Set[int] = set()
+def _find_sensitive(el: List[Event], pattern: Union[str, Pattern]) -> Set:
+    sensitive_ids = set()
     for e in el:
         if _check_event(e, pattern):
             sensitive_ids.add(e.id)

@@ -8,7 +8,7 @@ test:
 	pytest -s -vv tests/test_requestqueue.py
 
 typecheck:
-	MYPYPATH="${MYPYPATH}:../aw-core" mypy aw_client
+	MYPYPATH="${MYPYPATH}:../aw-core" mypy
 
 clean:
 	rm -rf build dist

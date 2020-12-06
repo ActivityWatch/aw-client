@@ -36,10 +36,10 @@ class MockClient:
 
 def test_basic():
     client = MockClient()
-    rq = RequestQueue(client)
+    rq = RequestQueue(client)  # type: ignore
 
     # Mockeypatching
-    rq._try_connect = lambda: True
+    rq._try_connect = lambda: True  # type: ignore
     rq.connected = True
 
     rq.start()
@@ -51,10 +51,10 @@ def test_basic():
 
 def test_complex():
     client = MockClient()
-    rq = RequestQueue(client)
+    rq = RequestQueue(client)  # type: ignore
 
     # Mockeypatching
-    rq._try_connect = lambda: False
+    rq._try_connect = lambda: False  # type: ignore
 
     rq.start()
     sleep(1)
