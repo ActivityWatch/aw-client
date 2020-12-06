@@ -43,11 +43,19 @@ def always_raise_for_request_errors(f: Callable[..., req.Response]):
             _log_request_exception(e)
             raise e
         return r
+
     return g
 
 
 class ActivityWatchClient:
-    def __init__(self, client_name: str = "unknown", testing=False, host=None, port=None, protocol="http") -> None:
+    def __init__(
+        self,
+        client_name: str = "unknown",
+        testing=False,
+        host=None,
+        port=None,
+        protocol="http",
+    ) -> None:
         """
         A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
 
@@ -69,9 +77,13 @@ class ActivityWatchClient:
 
         server_host = host or server_config["hostname"]
         server_port = port or server_config["port"]
-        self.server_address = "{protocol}://{host}:{port}".format(protocol=protocol, host=server_host, port=server_port)
+        self.server_address = "{protocol}://{host}:{port}".format(
+            protocol=protocol, host=server_host, port=server_port
+        )
 
-        self.instance = SingleInstance("{}-at-{}-on-{}".format(self.client_name, server_host, server_port))
+        self.instance = SingleInstance(
+            "{}-at-{}-on-{}".format(self.client_name, server_host, server_port)
+        )
 
         self.commit_interval = client_config.getfloat("commit_interval")
 
@@ -91,9 +103,19 @@ class ActivityWatchClient:
         return req.get(self._url(endpoint), params=params)
 
     @always_raise_for_request_errors
-    def _post(self, endpoint: str, data: Union[List[Any], Dict[str, Any]], params: Optional[dict] = None) -> req.Response:
+    def _post(
+        self,
+        endpoint: str,
+        data: Union[List[Any], Dict[str, Any]],
+        params: Optional[dict] = None,
+    ) -> req.Response:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
-        return req.post(self._url(endpoint), data=bytes(json.dumps(data), "utf8"), headers=headers, params=params)
+        return req.post(
+            self._url(endpoint),
+            data=bytes(json.dumps(data), "utf8"),
+            headers=headers,
+            params=params,
+        )
 
     @always_raise_for_request_errors
     def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
@@ -109,7 +131,13 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
-    def get_events(self, bucket_id: str, limit: int=-1, start: datetime=None, end: datetime=None) -> List[Event]:
+    def get_events(
+        self,
+        bucket_id: str,
+        limit: int = -1,
+        start: datetime = None,
+        end: datetime = None,
+    ) -> List[Event]:
         endpoint = "buckets/{}/events".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
@@ -141,7 +169,13 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
-    def get_eventcount(self, bucket_id: str, limit: int=-1, start: datetime=None, end: datetime=None) -> int:
+    def get_eventcount(
+        self,
+        bucket_id: str,
+        limit: int = -1,
+        start: datetime = None,
+        end: datetime = None,
+    ) -> int:
         endpoint = "buckets/{}/events/count".format(bucket_id)
 
         params = dict()  # type: Dict[str, str]
@@ -153,7 +187,14 @@ class ActivityWatchClient:
         response = self._get(endpoint, params=params)
         return int(response.text)
 
-    def heartbeat(self, bucket_id: str, event: Event, pulsetime: float, queued: bool=False, commit_interval: Optional[float]=None) -> Optional[Event]:
+    def heartbeat(
+        self,
+        bucket_id: str,
+        event: Event,
+        pulsetime: float,
+        queued: bool = False,
+        commit_interval: Optional[float] = None,
+    ) -> Optional[Event]:
         """
         Args:
             bucket_id: The bucket_id of the bucket to send the heartbeat to
@@ -168,6 +209,7 @@ class ActivityWatchClient:
         """
 
         from aw_transform.heartbeats import heartbeat_merge
+
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
         commit_interval = commit_interval if commit_interval else self.commit_interval
 
@@ -205,7 +247,7 @@ class ActivityWatchClient:
     #
 
     def get_buckets(self):
-        return self._get('buckets/').json()
+        return self._get("buckets/").json()
 
     def create_bucket(self, bucket_id: str, event_type: str, queued=False):
         if queued:
@@ -213,14 +255,14 @@ class ActivityWatchClient:
         else:
             endpoint = "buckets/{}".format(bucket_id)
             data = {
-                'client': self.client_name,
-                'hostname': self.client_hostname,
-                'type': event_type,
+                "client": self.client_name,
+                "hostname": self.client_hostname,
+                "type": event_type,
             }
             self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str):
-        self._delete('buckets/{}'.format(bucket_id))
+        self._delete("buckets/{}".format(bucket_id))
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
@@ -229,10 +271,10 @@ class ActivityWatchClient:
     # Import & export
 
     def export_all(self) -> dict:
-        return self._get('export').json()
+        return self._get("export").json()
 
     def export_bucket(self, bucket_id) -> dict:
-        return self._get('buckets/{}/export'.format(bucket_id)).json()
+        return self._get("buckets/{}/export".format(bucket_id)).json()
 
     def import_bucket(self, bucket: dict) -> None:
         endpoint = "import"
@@ -242,17 +284,26 @@ class ActivityWatchClient:
     #   Query (server-side transformation)
     #
 
-    def query(self, query: str, start: datetime, end: datetime, name: str=None, cache: bool=False) -> Union[int, dict]:
+    def query(
+        self,
+        query: str,
+        start: datetime,
+        end: datetime,
+        name: str = None,
+        cache: bool = False,
+    ) -> Union[int, dict]:
         endpoint = "query/"
         params = {}  # type: Dict[str, Any]
         if cache:
             if not name:
-                raise Exception("You are not allowed to do caching without a query name")
+                raise Exception(
+                    "You are not allowed to do caching without a query name"
+                )
             params["name"] = name
             params["cache"] = int(cache)
         data = {
-            'timeperiods': ["/".join([start.isoformat(), end.isoformat()])],
-            'query': query.split("\n")
+            "timeperiods": ["/".join([start.isoformat(), end.isoformat()])],
+            "query": query.split("\n"),
         }
         response = self._post(endpoint, data, params=params)
         if response.text.isdigit():
@@ -318,9 +369,15 @@ class RequestQueue(threading.Thread):
 
         persistqueue_path = os.path.join(
             queued_dir,
-            "{}{}.v{}.persistqueue".format(self.client.client_name, "-testing" if client.testing else "", self.VERSION)
+            "{}{}.v{}.persistqueue".format(
+                self.client.client_name,
+                "-testing" if client.testing else "",
+                self.VERSION,
+            ),
         )
-        self._persistqueue = persistqueue.FIFOSQLiteQueue(persistqueue_path, multithreading=True, auto_commit=False)
+        self._persistqueue = persistqueue.FIFOSQLiteQueue(
+            persistqueue_path, multithreading=True, auto_commit=False
+        )
         self._current = None  # type: Optional[QueuedRequest]
 
     def _get_next(self) -> Optional[QueuedRequest]:
@@ -345,7 +402,11 @@ class RequestQueue(threading.Thread):
         try:  # Try to connect
             self._create_buckets()
             self.connected = True
-            logger.info("Connection to aw-server established by {}".format(self.client.client_name))
+            logger.info(
+                "Connection to aw-server established by {}".format(
+                    self.client.client_name
+                )
+            )
         except req.RequestException:
             self.connected = False
 
@@ -367,7 +428,9 @@ class RequestQueue(threading.Thread):
             self.client._post(request.endpoint, request.data)
         except req.RequestException as e:
             self.connected = False
-            logger.warning("Failed to send request to aw-server, will queue requests until connection is available.")
+            logger.warning(
+                "Failed to send request to aw-server, will queue requests until connection is available."
+            )
             return
 
         self._task_done()
@@ -377,7 +440,11 @@ class RequestQueue(threading.Thread):
         while not self.should_stop():
             # Connect
             while not self._try_connect():
-                logger.warning("Not connected to server, {} requests in queue".format(self._persistqueue.qsize()))
+                logger.warning(
+                    "Not connected to server, {} requests in queue".format(
+                        self._persistqueue.qsize()
+                    )
+                )
                 if self.wait(self._attempt_reconnect_interval):
                     break
 

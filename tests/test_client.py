@@ -13,7 +13,7 @@ def create_unique_event():
     return Event(
         timestamp=datetime.now(timezone.utc),
         duration=timedelta(),
-        data={"label": str(random())}
+        data={"label": str(random())},
     )
 
 
@@ -40,8 +40,8 @@ with ActivityWatchClient(client_name, testing=True) as client:
     # Check bucket
     buckets = client.get_buckets()
     assert bucket_name in buckets
-    assert bucket_name == buckets[bucket_name]['id']
-    assert bucket_etype == buckets[bucket_name]['type']
+    assert bucket_name == buckets[bucket_name]["id"]
+    assert bucket_etype == buckets[bucket_name]["type"]
 
     # Insert events
     e1 = create_unique_event()
@@ -55,7 +55,7 @@ with ActivityWatchClient(client_name, testing=True) as client:
 
     # Assert events
     assert fetched_events == events
-    assert events[0]['data']['label'] == e1['data']['label']
+    assert events[0]["data"]["label"] == e1["data"]["label"]
 
     # Check eventcount
     eventcount = client.get_eventcount(bucket_name)
