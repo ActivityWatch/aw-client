@@ -23,10 +23,13 @@ def _valid_date(s):
         raise argparse.ArgumentTypeError(msg)
 
 
+class _Context:
+    client: aw_client.ActivityWatchClient
+
+
 @click.group(
     help="CLI utility for aw-client to aid in interacting with the ActivityWatch server"
 )
-@click.option("--testing", is_flag=True, help="Set to use testing ports by default")
 @click.option(
     "--host",
     default="127.0.0.1",
@@ -37,12 +40,14 @@ def _valid_date(s):
     default=5600,
     help="Port to use",
 )
+@click.option("--testing", is_flag=True, help="Set to use testing ports by default")
 @click.pass_context
 def main(ctx, testing: bool, host: str, port: int):
-    ctx.testing = testing
-    ctx.client = aw_client.ActivityWatchClient(
+    ctx.obj = _Context()
+    ctx.obj.client = aw_client.ActivityWatchClient(
         host=host,
         port=port if port != 5600 else (5666 if testing else 5600),
+        testing=testing,
     )
 
 
@@ -55,13 +60,13 @@ def heartbeat(ctx, bucket_id: str, data: str, pulsetime: int):
     now = datetime.now(timezone.utc)
     e = Event(duration=0, data=json.loads(data), timestamp=now)
     print(e)
-    ctx.client.heartbeat(bucket_id, e, pulsetime)
+    ctx.obj.client.heartbeat(bucket_id, e, pulsetime)
 
 
 @main.command(help="List all buckets")
 @click.pass_context
 def buckets(ctx):
-    buckets = ctx.client.get_buckets()
+    buckets = ctx.obj.client.get_buckets()
     print("Buckets:")
     for bucket in buckets:
         print(" - {}".format(bucket))
@@ -71,7 +76,7 @@ def buckets(ctx):
 @click.argument("bucket_id")
 @click.pass_context
 def events(ctx, bucket_id: str):
-    events = ctx.client.get_events(bucket_id)
+    events = ctx.obj.client.get_events(bucket_id)
     print("events:")
     for e in events:
         print(
@@ -102,7 +107,7 @@ def query(
 ):
     with open(path) as f:
         query = f.read()
-    result = ctx.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = ctx.obj.client.query(query, [(start, stop)], cache=cache, name=name)
     if _json:
         print(json.dumps(result))
     else:
