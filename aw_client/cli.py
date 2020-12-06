@@ -2,7 +2,6 @@
 import json
 import argparse
 from datetime import timedelta, datetime, timezone
-from pprint import pprint
 
 import click
 
@@ -55,18 +54,18 @@ def main(ctx, testing: bool, host: str, port: int):
 @click.argument("bucket_id")
 @click.argument("data")
 @click.option("--pulsetime", default=60, help="pulsetime to use for merging heartbeats")
-@click.pass_context
-def heartbeat(ctx, bucket_id: str, data: str, pulsetime: int):
+@click.pass_obj
+def heartbeat(obj: _Context, bucket_id: str, data: str, pulsetime: int):
     now = datetime.now(timezone.utc)
     e = Event(duration=0, data=json.loads(data), timestamp=now)
     print(e)
-    ctx.obj.client.heartbeat(bucket_id, e, pulsetime)
+    obj.client.heartbeat(bucket_id, e, pulsetime)
 
 
 @main.command(help="List all buckets")
-@click.pass_context
-def buckets(ctx):
-    buckets = ctx.obj.client.get_buckets()
+@click.pass_obj
+def buckets(obj: _Context):
+    buckets = obj.client.get_buckets()
     print("Buckets:")
     for bucket in buckets:
         print(" - {}".format(bucket))
@@ -74,9 +73,9 @@ def buckets(ctx):
 
 @main.command(help="Query events from bucket with ID `bucket_id`")
 @click.argument("bucket_id")
-@click.pass_context
-def events(ctx, bucket_id: str):
-    events = ctx.obj.client.get_events(bucket_id)
+@click.pass_obj
+def events(obj: _Context, bucket_id: str):
+    events = obj.client.get_events(bucket_id)
     print("events:")
     for e in events:
         print(
@@ -95,9 +94,9 @@ def events(ctx, bucket_id: str):
 @click.option("--json", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
-@click.pass_context
+@click.pass_obj
 def query(
-    ctx,
+    obj: _Context,
     path: str,
     cache: bool,
     _json: bool,
@@ -107,7 +106,7 @@ def query(
 ):
     with open(path) as f:
         query = f.read()
-    result = ctx.obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
     if _json:
         print(json.dumps(result))
     else:
