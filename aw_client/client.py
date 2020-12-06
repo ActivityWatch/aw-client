@@ -290,7 +290,7 @@ class ActivityWatchClient:
         timeperiods: List[Tuple[datetime, datetime]],
         name: str = None,
         cache: bool = False,
-    ) -> Any:
+    ) -> List[Any]:
         endpoint = "query/"
         params = {}  # type: Dict[str, Any]
         if cache:
@@ -309,10 +309,7 @@ class ActivityWatchClient:
             "query": query.split("\n"),
         }
         response = self._post(endpoint, data, params=params)
-        if response.text.isdigit():
-            return int(response.text)
-        else:
-            return response.json()
+        return response.json()
 
     #
     #   Connect and disconnect

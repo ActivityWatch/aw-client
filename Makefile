@@ -7,6 +7,9 @@ test:
 	python -c "import aw_client"
 	pytest -s -vv tests/test_requestqueue.py
 
+test-integration:
+	pytest -v tests/test_client.py
+
 typecheck:
 	MYPYPATH="${MYPYPATH}:../aw-core" mypy
 
