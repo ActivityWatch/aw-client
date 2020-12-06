@@ -6,7 +6,7 @@ import threading
 import functools
 from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Union, Dict, Callable
+from typing import Optional, List, Any, Union, Dict, Callable, Tuple
 
 import requests as req
 import persistqueue
@@ -287,11 +287,10 @@ class ActivityWatchClient:
     def query(
         self,
         query: str,
-        start: datetime,
-        end: datetime,
+        timeperiods: List[Tuple[datetime, datetime]],
         name: str = None,
         cache: bool = False,
-    ) -> Union[int, dict]:
+    ) -> Any:
         endpoint = "query/"
         params = {}  # type: Dict[str, Any]
         if cache:
@@ -301,8 +300,12 @@ class ActivityWatchClient:
                 )
             params["name"] = name
             params["cache"] = int(cache)
+
         data = {
-            "timeperiods": ["/".join([start.isoformat(), end.isoformat()])],
+            "timeperiods": [
+                "/".join([start.isoformat(), end.isoformat()])
+                for start, end in timeperiods
+            ],
             "query": query.split("\n"),
         }
         response = self._post(endpoint, data, params=params)
