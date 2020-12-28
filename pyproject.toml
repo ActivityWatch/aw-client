@@ -23,9 +23,9 @@ aw-core = {git = "https://github.com/ActivityWatch/aw-core.git"}
 click = "^7.1.1"
 
 [tool.poetry.dev-dependencies]
-pytest = "^5.3.2"
+pytest = "^6.0"
 pytest-cov = "^2.8.1"
-mypy = "^0.761"
+mypy = "*"
 pylint = "^2.4.4"
 
 [build-system]
