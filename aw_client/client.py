@@ -234,6 +234,12 @@ class ActivityWatchClient:
                 else:
                     self.last_heartbeat[bucket_id] = merge
             else:
+                # If the duration is calculated in `heartbeat_merge`,
+                # an event that occurs only once will have a default duration
+                # of 0. We need to calculate the actual duration before sending
+                # the request.
+                if (last_heartbeat.duration).total_seconds() == 0:
+                    last_heartbeat.duration = event.timestamp - last_heartbeat.timestamp
                 data = last_heartbeat.to_json_dict()
                 self.request_queue.add_request(endpoint, data)
                 self.last_heartbeat[bucket_id] = event
