@@ -229,7 +229,7 @@ class ActivityWatchClient:
                 # If last_heartbeat becomes longer than commit_interval
                 # then commit, else cache merged.
                 diff = (last_heartbeat.duration).total_seconds()
-                if diff > commit_interval:
+                if diff >= commit_interval:
                     data = merge.to_json_dict()
                     self.request_queue.add_request(endpoint, data)
                     self.last_heartbeat[bucket_id] = event
