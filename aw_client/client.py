@@ -159,10 +159,10 @@ class ActivityWatchClient:
     def send_events(self, bucket_id: str, events: List[Event]):
         return self.insert_events(bucket_id, events)
 
-    def insert_event(self, bucket_id: str, event: Event) -> Event:
+    def insert_event(self, bucket_id: str, event: Event) -> None:
         endpoint = "buckets/{}/events".format(bucket_id)
         data = [event.to_json_dict()]
-        return Event(**self._post(endpoint, data).json())
+        self._post(endpoint, data)
 
     def insert_events(self, bucket_id: str, events: List[Event]) -> None:
         endpoint = "buckets/{}/events".format(bucket_id)
