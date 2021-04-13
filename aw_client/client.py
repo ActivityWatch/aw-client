@@ -263,8 +263,8 @@ class ActivityWatchClient:
             }
             self._post(endpoint, data)
 
-    def delete_bucket(self, bucket_id: str):
-        self._delete("buckets/{}".format(bucket_id))
+    def delete_bucket(self, bucket_id: str, force: bool = False):
+        self._delete("buckets/{}".format(bucket_id) + ("?force=1" if force else ""))
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
