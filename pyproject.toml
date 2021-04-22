@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "aw-client"
-version = "0.3.1"
+version = "0.5.0"
 description = "Client library for ActivityWatch"
 authors = ["Erik Bjäreholt <erik@bjareho.lt>", "Johan Bjäreholt <johan@bjareho.lt>"]
 license = "MPL-2.0"
 readme = "README.md"
 homepage = "https://activitywatch.net/"
 repository = "https://github.com/ActivityWatch/aw-client/"
-documentation = "https://activitywatch.readthedocs.io/"
+documentation = "https://docs.activitywatch.net/"
 packages = [
     { include = "aw_client" },
 ]
@@ -17,9 +17,9 @@ aw-client = "aw_client.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.6"
+aw-core = "^0.5"
 requests = "^2.22.0"
-persist-queue = "^0.5.0"
-aw-core = {git = "https://github.com/ActivityWatch/aw-core.git"}
+persist-queue = "^0.6.0"
 click = "^7.1.1"
 
 [tool.poetry.dev-dependencies]
