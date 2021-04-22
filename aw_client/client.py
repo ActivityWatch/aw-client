@@ -211,9 +211,7 @@ class ActivityWatchClient:
         from aw_transform.heartbeats import heartbeat_merge
 
         endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
-        commit_interval = (
-            commit_interval if commit_interval != None else self.commit_interval
-        )
+        _commit_interval = commit_interval or self.commit_interval
 
         if queued:
             # Pre-merge heartbeats
@@ -229,7 +227,7 @@ class ActivityWatchClient:
                 # If last_heartbeat becomes longer than commit_interval
                 # then commit, else cache merged.
                 diff = (last_heartbeat.duration).total_seconds()
-                if diff >= commit_interval:
+                if diff >= _commit_interval:
                     data = merge.to_json_dict()
                     self.request_queue.add_request(endpoint, data)
                     self.last_heartbeat[bucket_id] = event
