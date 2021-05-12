@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aw-client"
-version = "0.5.0"
+version = "0.5.1"
 description = "Client library for ActivityWatch"
 authors = ["Erik Bjäreholt <erik@bjareho.lt>", "Johan Bjäreholt <johan@bjareho.lt>"]
 license = "MPL-2.0"
@@ -17,7 +17,7 @@ aw-client = "aw_client.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.7"
-aw-core = "^0.5"
+aw-core = "^0.5.1"
 requests = "^2.22.0"
 persist-queue = "^0.6.0"
 click = "^7.1.1"
