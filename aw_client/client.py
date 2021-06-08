@@ -33,6 +33,10 @@ def _log_request_exception(e: req.RequestException):
         pass
 
 
+def _dt_is_tzaware(dt: datetime) -> bool:
+    return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
+
+
 def always_raise_for_request_errors(f: Callable[..., req.Response]):
     @functools.wraps(f)
     def g(*args, **kwargs):
@@ -300,6 +304,14 @@ class ActivityWatchClient:
                 )
             params["name"] = name
             params["cache"] = int(cache)
+
+        # Check that datetimes have timezone information
+        for start, stop in timeperiods:
+            try:
+                assert _dt_is_tzaware(start)
+                assert _dt_is_tzaware(stop)
+            except AssertionError:
+                raise ValueError("start/stop needs to have a timezone set")
 
         data = {
             "timeperiods": [

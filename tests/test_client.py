@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import time
-
 from random import random
 from datetime import datetime, timedelta, timezone
 from requests.exceptions import HTTPError
+
+import pytest
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
@@ -66,11 +67,19 @@ def test_full():
         assert eventcount == len(events)
 
         result = client.query(
-            f"RETURN = query_bucket('{bucket_name}');",
+            f'RETURN = query_bucket("{bucket_name}");',
             timeperiods=[(now - timedelta(hours=1), now + timedelta(hours=1))],
         )
         assert len(result) == 1
         assert len(result[0]) == 3
+
+        # Test exception raising
+        with pytest.raises(ValueError):
+            # timeperiod end time does not have a timezone set
+            result = client.query(
+                f'RETURN = query_bucket("{bucket_name}");',
+                timeperiods=[(now - timedelta(hours=1), datetime.now())],
+            )
 
         # Delete bucket
         client.delete_bucket(bucket_name)
