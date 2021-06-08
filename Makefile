@@ -11,7 +11,7 @@ test-integration:
 	pytest -v tests/test_client.py
 
 typecheck:
-	MYPYPATH="${MYPYPATH}:../aw-core" mypy
+	poetry run mypy aw_client tests
 
 clean:
 	rm -rf build dist
