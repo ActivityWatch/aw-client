@@ -28,6 +28,13 @@ pytest-cov = "^2.8.1"
 mypy = "*"
 pylint = "^2.4.4"
 tabulate = "^0.8.7"
+types-requests = "^0.1.8"
+types-tabulate = "^0.1.0"
+
+[tool.mypy]
+files = ["aw_client", "tests", "examples"]
+ignore_missing_imports = true
+check_untyped_defs = true
 
 [build-system]
 requires = ["poetry>=0.12"]

@@ -11,7 +11,7 @@ test-integration:
 	pytest -v tests/test_client.py
 
 typecheck:
-	poetry run mypy aw_client tests
+	poetry run mypy
 
 clean:
 	rm -rf build dist
