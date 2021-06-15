@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aw-client"
-version = "0.5.3"
+version = "0.5.4"
 description = "Client library for ActivityWatch"
 authors = ["Erik Bjäreholt <erik@bjareho.lt>", "Johan Bjäreholt <johan@bjareho.lt>"]
 license = "MPL-2.0"

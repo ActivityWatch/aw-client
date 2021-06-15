@@ -89,7 +89,7 @@ class ActivityWatchClient:
             "{}-at-{}-on-{}".format(self.client_name, server_host, server_port)
         )
 
-        self.commit_interval = client_config.getfloat("commit_interval")
+        self.commit_interval = client_config["commit_interval"]
 
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
