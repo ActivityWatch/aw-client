@@ -1,19 +1,21 @@
-from configparser import ConfigParser
+from aw_core.config import load_config_toml
 
-import aw_core.config
+default_config = """
+[server]
+hostname = "127.0.0.1"
+port = "5600"
 
-default_client_config = ConfigParser()
-default_client_config["server"] = {
-    "hostname": "127.0.0.1",
-    "port": "5600",
-}
-default_client_config["server-testing"] = {"hostname": "127.0.0.1", "port": "5666"}
+[client]
+commit_interval = 10
 
-default_client_config["client"] = {
-    "commit_interval": "10",
-}
-default_client_config["client-testing"] = {"commit_interval": "5"}
+[server-testing]
+hostname = "127.0.0.1"
+port = "5666"
+
+[client-testing]
+commit_interval = 5
+""".strip()
 
 
 def load_config():
-    return aw_core.config.load_config("aw-client", default_client_config)
+    return load_config_toml("aw-client", default_config)
