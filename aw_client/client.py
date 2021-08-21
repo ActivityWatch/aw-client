@@ -17,6 +17,9 @@ from aw_core.dirs import get_data_dir
 from .config import load_config
 from .singleinstance import SingleInstance
 
+
+# FIXME: This line is probably badly placed
+logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 def _log_request_exception(e: req.RequestException):
