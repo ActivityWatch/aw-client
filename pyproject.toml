@@ -18,19 +18,18 @@ aw-client = "aw_client.cli:main"
 [tool.poetry.dependencies]
 python = "^3.7"
 aw-core = "^0.5.1"
-requests = "^2.22.0"
+requests = "^2.22"
 persist-queue = "^0.6.0"
-click = "^7.1.1"
+click = "^8.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.0"
 pytest-cov = "^2.8.1"
 mypy = "*"
 pylint = "^2.4.4"
-tabulate = "^0.8.7"
-types-requests = "^0.1.8"
-types-tabulate = "^0.1.0"
-types-click = "^7.1.0"
+tabulate = "^0.8"
+types-requests = "^2.22"
+types-tabulate = "^0.8"
 
 [tool.mypy]
 files = ["aw_client", "tests", "examples"]
