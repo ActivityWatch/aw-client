@@ -22,6 +22,7 @@ from .singleinstance import SingleInstance
 logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+
 def _log_request_exception(e: req.RequestException):
     r = e.response
     logger.warning(str(e))
@@ -197,7 +198,7 @@ class ActivityWatchClient:
         pulsetime: float,
         queued: bool = False,
         commit_interval: Optional[float] = None,
-    ) -> Optional[Event]:
+    ) -> None:
         """
         Args:
             bucket_id: The bucket_id of the bucket to send the heartbeat to
@@ -240,16 +241,14 @@ class ActivityWatchClient:
                 data = last_heartbeat.to_json_dict()
                 self.request_queue.add_request(endpoint, data)
                 self.last_heartbeat[bucket_id] = event
-
-            return None
         else:
-            return Event(**self._post(endpoint, event.to_json_dict()).json())
+            self._post(endpoint, event.to_json_dict()
 
     #
     #   Bucket get/post requests
     #
 
-    def get_buckets(self):
+    def get_buckets(self) -> dict:
         return self._get("buckets/").json()
 
     def create_bucket(self, bucket_id: str, event_type: str, queued=False):
