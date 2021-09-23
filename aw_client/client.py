@@ -234,7 +234,7 @@ class ActivityWatchClient:
                 self.request_queue.add_request(endpoint, data)
                 self.last_heartbeat[bucket_id] = event
         else:
-            self._post(endpoint, event.to_json_dict()
+            self._post(endpoint, event.to_json_dict())
 
     #
     #   Bucket get/post requests
