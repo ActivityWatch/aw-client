@@ -36,12 +36,14 @@ def generous_approx(events: List[dict], max_break: float) -> timedelta:
 
 
 def query():
+    print("Querying events...")
     td1d = timedelta(days=1)
     day_offset = timedelta(hours=4)
+    print(f"  Day offset: {day_offset}")
+    print("")
 
-    now = datetime.now(tz=timezone.utc)
-    # TODO: Account for timezone, or maybe it's handled correctly by aw_client?
-    today = datetime.combine(now.date(), time()) + day_offset
+    now = datetime.now().astimezone()
+    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
 
     timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
     timeperiods.reverse()
