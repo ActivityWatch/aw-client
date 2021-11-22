@@ -145,7 +145,7 @@ def query(
 
 
 @main.command(help="Generate an activity report")
-@click.option("--hostname")
+@click.argument("hostname")
 @click.option("--cache", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
@@ -237,7 +237,7 @@ def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
 
 
 @main.command(help="Query 'canonical events' for a single host (filtered, classified)")
-@click.option("--hostname")
+@click.argument("hostname")
 @click.option("--cache", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
