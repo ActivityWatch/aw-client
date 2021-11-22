@@ -25,8 +25,8 @@ class EnhancedJSONEncoder(json.JSONEncoder):
 @dataclass
 class QueryParams:
     bid_browsers: List[str]
-    classes: List[dict]
-    filter_classes: List[str]
+    classes: List[Tuple[List[str], dict]]
+    filter_classes: List[List[str]]
     filter_afk: bool
     include_audible: bool
 
@@ -202,10 +202,10 @@ def fullDesktopQuery(
     windowbucket: str,
     afkbucket: str,
     filterAFK: bool,
-    classes: List[dict],
+    classes: List[Tuple[List[str], dict]],
     filterCategories: List[List[str]],
     include_audible: bool,
-) -> List[str]:
+) -> str:
     # Escape `"`
     browserbuckets = [escape_doublequote(bucket) for bucket in browserbuckets]
     windowbucket = escape_doublequote(windowbucket)
