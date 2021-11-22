@@ -2,6 +2,7 @@
 import json
 import argparse
 import logging
+import textwrap
 from typing import List
 from datetime import timedelta, datetime, timezone
 
@@ -189,13 +190,18 @@ def report(
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
+        print()
         # print(period["window"]["cat_events"])
 
         cat_events = _parse_events(period["window"]["cat_events"])
-        print_top(cat_events, lambda e: e.data["$category"])
+        print_top(
+            cat_events,
+            lambda e: " > ".join(e.data["$category"]),
+            title="Top categories",
+        )
 
         title_events = _parse_events(period["window"]["title_events"])
-        print_top(title_events, lambda e: e.data["title"])
+        print_top(title_events, lambda e: e.data["title"], title="Top titles")
 
         active_events = _parse_events(period["window"]["title_events"])
         print(
@@ -208,9 +214,15 @@ def _parse_events(events: List[dict]) -> List[Event]:
     return [Event(**event) for event in events]
 
 
-def print_top(events: List[Event], key=lambda e: e.data):
-    if len(events) > 10:
-        print("Showing 10 out of {} events:".format(len(events)))
+def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
+    print(
+        title
+        + (
+            " (showing 10 out of {} events)".format(len(events))
+            if len(events) > 10
+            else ""
+        )
+    )
     print(
         tabulate(
             [
@@ -270,16 +282,25 @@ def canonical(
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
-        print("Showing 10 out of {} events:".format(len(period)))
-        for event in period[:10]:
-            event.pop("id")
-            event.pop("timestamp")
-            print(
-                " - Duration: {} \tData: {}".format(
-                    str(timedelta(seconds=event["duration"])).split(".")[0],
-                    event["data"],
-                )
+        print()
+        events = _parse_events(period)
+        print("Showing last 10 out of {} events:".format(len(events)))
+
+        print(
+            tabulate(
+                [
+                    (
+                        str(e.timestamp).split(".")[0],
+                        str(e.duration).split(".")[0],
+                        f'[{e.data["app"]}] {textwrap.shorten(e.data["title"], 60, placeholder="...")}',
+                    )
+                    for e in events[-10:]
+                ],
+                headers=["Timestamp", "Duration", "Data"],
             )
+        )
+
+        print()
         print(
             "Total duration:\t",
             timedelta(seconds=sum(e["duration"] for e in period)),
