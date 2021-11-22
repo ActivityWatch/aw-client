@@ -9,9 +9,12 @@ from datetime import timedelta, datetime, timezone
 import click
 from tabulate import tabulate
 
-import aw_client
-from aw_client import queries
 from aw_core import Event
+
+import aw_client
+from . import queries
+from .classes import default_classes
+
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -167,11 +170,9 @@ def report(
     bid_browsers: List[str] = []
 
     logger.info("Using default classes")
-    from .classes import default_classes
+    classes = default_classes
 
-    classes: List[dict] = default_classes
-
-    filter_classes: List[str] = []
+    filter_classes: List[List[str]] = []
     filter_afk: bool = True
     include_audible: bool = True
 
@@ -259,8 +260,8 @@ def canonical(
         stop = stop.astimezone()
 
     bid_browsers: List[str] = []
-    classes: List[dict] = []
-    filter_classes: List[str] = []
+    classes = default_classes
+    filter_classes: List[List[str]] = []
     filter_afk: bool = True
     include_audible: bool = True
 
