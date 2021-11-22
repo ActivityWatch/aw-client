@@ -21,13 +21,14 @@ aw-core = "^0.5.7"
 requests = "^2.22"
 persist-queue = "^0.6.0"
 click = "^8.0"
+tabulate = "^0.8"
+typing-extensions = "^4.0.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.0"
 pytest-cov = "^2.8.1"
 mypy = "*"
 pylint = "^2.4.4"
-tabulate = "^0.8"
 types-requests = "^2.22"
 types-tabulate = "^0.8"
 
