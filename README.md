@@ -25,6 +25,34 @@ system-wide it can be installed with `pip install .`, but that has the issue
 that it might not get the exact version of the dependencies due to not reading
 the poetry.lock file.
 
+## Usage
+
+For the CLI:
+
+```
+$ aw-client --help
+Usage: aw-client [OPTIONS] COMMAND [ARGS]...
+
+  CLI utility for aw-client to aid in interacting with the ActivityWatch
+  server
+
+Options:
+  --host TEXT     Address of host
+  --port INTEGER  Port to use
+  -v, --verbose   Verbosity
+  --testing       Set to use testing ports by default
+  --help          Show this message and exit.
+
+Commands:
+  buckets    List all buckets
+  canonical  Query 'canonical events' for a single host (filtered,...
+  events     Query events from bucket with ID `bucket_id`
+  heartbeat  Send a heartbeat to bucket with ID `bucket_id` with JSON `data`
+  query      Run a query in file at `path` on the server
+  report     Generate an activity report
+```
+
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
