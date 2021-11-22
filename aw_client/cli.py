@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 import json
 import argparse
+import logging
+from typing import List
 from datetime import timedelta, datetime, timezone
 
 import click
+from tabulate import tabulate
 
 import aw_client
+from aw_client import queries
 from aw_core import Event
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
 td1yr = timedelta(days=365)
+
+logger = logging.getLogger(__name__)
 
 
 def _valid_date(s):
@@ -39,15 +45,22 @@ class _Context:
     default=5600,
     help="Port to use",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    help="Verbosity",
+)
 @click.option("--testing", is_flag=True, help="Set to use testing ports by default")
 @click.pass_context
-def main(ctx, testing: bool, host: str, port: int):
+def main(ctx, testing: bool, verbose: bool, host: str, port: int):
     ctx.obj = _Context()
     ctx.obj.client = aw_client.ActivityWatchClient(
         host=host,
         port=port if port != 5600 else (5666 if testing else 5600),
         testing=testing,
     )
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
 
 
 @main.command(help="Send a heartbeat to bucket with ID `bucket_id` with JSON `data`")
@@ -125,6 +138,152 @@ def query(
                 "Total duration:\t",
                 timedelta(seconds=sum(e["duration"] for e in period)),
             )
+
+
+@main.command(help="Generate an activity report")
+@click.option("--hostname")
+@click.option("--cache", is_flag=True)
+@click.option("--start", default=now - td1day, type=click.DateTime())
+@click.option("--stop", default=now + td1yr, type=click.DateTime())
+@click.pass_obj
+def report(
+    obj: _Context,
+    hostname: str,
+    cache: bool,
+    start: datetime,
+    stop: datetime,
+    name: str = None,
+):
+    logger.info(f"Querying between {start} and {stop}")
+    bid_window = f"aw-watcher-window_{hostname}"
+    bid_afk = f"aw-watcher-afk_{hostname}"
+
+    if not start.tzinfo:
+        start = start.astimezone()
+    if not stop.tzinfo:
+        stop = stop.astimezone()
+
+    bid_browsers: List[str] = []
+
+    logger.info("Using default classes")
+    from .classes import default_classes
+
+    classes: List[dict] = default_classes
+
+    filter_classes: List[str] = []
+    filter_afk: bool = True
+    include_audible: bool = True
+
+    query = queries.fullDesktopQuery(
+        bid_browsers,
+        bid_window,
+        bid_afk,
+        filter_afk,
+        classes,
+        filter_classes,
+        include_audible,
+    )
+    logger.debug("Query: \n" + queries.pretty_query(query))
+
+    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+
+    # TODO: Print titles, apps, categories, with most time
+    for period in result:
+        # print(period["window"]["cat_events"])
+
+        cat_events = _parse_events(period["window"]["cat_events"])
+        print_top(cat_events, lambda e: e.data["$category"])
+
+        title_events = _parse_events(period["window"]["title_events"])
+        print_top(title_events, lambda e: e.data["title"])
+
+        active_events = _parse_events(period["window"]["title_events"])
+        print(
+            "Total duration:\t",
+            sum((e.duration for e in active_events), timedelta()),
+        )
+
+
+def _parse_events(events: List[dict]) -> List[Event]:
+    return [Event(**event) for event in events]
+
+
+def print_top(events: List[Event], key=lambda e: e.data):
+    if len(events) > 10:
+        print("Showing 10 out of {} events:".format(len(events)))
+    print(
+        tabulate(
+            [
+                (event.duration, key(event))
+                for event in sorted(events, key=lambda e: e.duration, reverse=True)[:10]
+            ],
+            headers=["Duration", "Key"],
+        )
+    )
+    print()
+
+
+@main.command(help="Query 'canonical events' for a single host (filtered, classified)")
+@click.option("--hostname")
+@click.option("--cache", is_flag=True)
+@click.option("--start", default=now - td1day, type=click.DateTime())
+@click.option("--stop", default=now + td1yr, type=click.DateTime())
+@click.pass_obj
+def canonical(
+    obj: _Context,
+    hostname: str,
+    cache: bool,
+    start: datetime,
+    stop: datetime,
+    name: str = None,
+):
+    logger.info(f"Querying between {start} and {stop}")
+    bid_window = f"aw-watcher-window_{hostname}"
+    bid_afk = f"aw-watcher-afk_{hostname}"
+
+    if not start.tzinfo:
+        start = start.astimezone()
+    if not stop.tzinfo:
+        stop = stop.astimezone()
+
+    bid_browsers: List[str] = []
+    classes: List[dict] = []
+    filter_classes: List[str] = []
+    filter_afk: bool = True
+    include_audible: bool = True
+
+    query = queries.canonicalEvents(
+        queries.DesktopQueryParams(
+            bid_browsers,
+            classes,
+            filter_classes,
+            filter_afk,
+            include_audible,
+            bid_window,
+            bid_afk,
+        )
+    )
+    query = f"""{query}\n RETURN = events;"""
+    logger.debug("Query: \n" + queries.pretty_query(query))
+
+    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+
+    # TODO: Print titles, apps, categories, with most time
+    for period in result:
+        print("Showing 10 out of {} events:".format(len(period)))
+        for event in period[:10]:
+            event.pop("id")
+            event.pop("timestamp")
+            print(
+                " - Duration: {} \tData: {}".format(
+                    str(timedelta(seconds=event["duration"])).split(".")[0],
+                    event["data"],
+                )
+            )
+        print(
+            "Total duration:\t",
+            timedelta(seconds=sum(e["duration"] for e in period)),
+        )
 
 
 if __name__ == "__main__":
