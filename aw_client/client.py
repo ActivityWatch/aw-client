@@ -165,6 +165,14 @@ class ActivityWatchClient:
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
+    def delete_event(self, bucket_id: str, event: Event) -> None:
+        if event.id == None:
+            raise ValueError(
+                "Cannot delete an event: event ID is undefined."
+            )
+        endpoint = "buckets/{}/events/{}".format(bucket_id, event.id)
+        self._delete(endpoint)
+
     def get_eventcount(
         self,
         bucket_id: str,
