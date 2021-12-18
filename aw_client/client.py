@@ -166,7 +166,7 @@ class ActivityWatchClient:
         self._post(endpoint, data)
 
     def delete_event(self, bucket_id: str, event: Event) -> None:
-        if event.id == None:
+        if event.id is None:
             raise ValueError(
                 "Cannot delete an event: event ID is undefined."
             )
