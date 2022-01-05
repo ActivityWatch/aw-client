@@ -1,6 +1,13 @@
+"""
+Script that computes how many hours was spent in a regex-specified "work" category for each day in a given month.
+
+Also saves the matching work-events to a JSON file (for auditing purposes).
+"""
+
 import json
 import re
-from datetime import datetime, timedelta, timezone, time
+import os
+from datetime import datetime, timedelta, time
 from typing import List, Tuple, Dict
 
 from tabulate import tabulate
@@ -8,6 +15,10 @@ from tabulate import tabulate
 import aw_client
 from aw_core import Event
 from aw_transform import flood
+
+
+EXAMPLE_REGEX = r"activitywatch|algobit|defiarb|github.com"
+OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
 
 
 def _pretty_timedelta(td: timedelta) -> str:
@@ -35,7 +46,7 @@ def generous_approx(events: List[dict], max_break: float) -> timedelta:
     )
 
 
-def query():
+def query(regex: str = EXAMPLE_REGEX, save=True):
     print("Querying events...")
     td1d = timedelta(days=1)
     day_offset = timedelta(hours=4)
@@ -53,7 +64,7 @@ def query():
             ["Work"],
             {
                 "type": "regex",
-                "regex": r"activitywatch|algobit|defiarb|github.com",
+                "regex": regex,
                 "ignore_case": True,
             },
         )
@@ -80,7 +91,6 @@ def query():
             timeperiods, res, break_time, {"category_rule": categories[0][1]["regex"]}
         )
 
-    save = True
     if save:
         fn = "working_hours_events.json"
         with open(fn, "w") as f:
@@ -110,6 +120,7 @@ def _print(timeperiods, res, break_time, params: dict):
                 "left",
                 "right",
             ),
+            tablefmt="html" if OUTPUT_HTML else "simple",
         )
     )
 
