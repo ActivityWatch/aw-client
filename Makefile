@@ -13,6 +13,9 @@ test-integration:
 typecheck:
 	poetry run mypy
 
+lint-fix:
+	pyupgrade --py37-plus aw_client/*.py examples/*.py
+
 clean:
 	rm -rf build dist
 	rm -rf aw_client/__pycache__
