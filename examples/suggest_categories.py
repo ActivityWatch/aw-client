@@ -11,6 +11,7 @@ from tabulate import tabulate
 
 from aw_core import Event
 import aw_client
+from aw_client import queries
 
 # set up client
 awc = aw_client.ActivityWatchClient("test")
@@ -33,18 +34,20 @@ def get_events():
         ],
     ]
 
-    # TODO: Harmonize with https://github.com/ActivityWatch/aw-client/blob/2cb09e768c32bb6e22e869b830f53addfb130a71/examples/working_hours.py#L75-L87
-    #       Perhaps put in a new module aw_client.queries?
+    canonicalQuery = queries.canonicalEvents(
+        queries.DesktopQueryParams(
+            bid_window="aw-watcher-window_",
+            bid_afk="aw-watcher-afk_",
+            classes=categories,
+        )
+    )
     res = awc.query(
         f"""
-    window = flood(query_bucket(find_bucket("aw-watcher-window_")));
-    afk = flood(query_bucket(find_bucket("aw-watcher-afk_")));
-    events = filter_period_intersect(window, filter_keyvals(afk, "status", ["not-afk"]));
-    events = categorize(events, {json.dumps(categories)});
-    events = filter_keyvals(events, "$category", [["Uncategorized"]]);
-    duration = sum_durations(events);
-    RETURN = {{"events": events, "duration": duration}};
-    """,
+        {canonicalQuery}
+        events = filter_keyvals(events, "$category", [["Uncategorized"]]);
+        duration = sum_durations(events);
+        RETURN = {{"events": events, "duration": duration}};
+        """,
         timeperiods,
     )
     events = res[0]["events"]

@@ -169,22 +169,20 @@ def report(
 
     bid_browsers: List[str] = []
 
+    # TODO: Allow loading from toml
     logger.info("Using default classes")
     classes = default_classes
 
-    filter_classes: List[List[str]] = []
-    filter_afk: bool = True
-    include_audible: bool = True
-
-    query = queries.fullDesktopQuery(
-        bid_browsers,
-        bid_window,
-        bid_afk,
-        filter_afk,
-        classes,
-        filter_classes,
-        include_audible,
+    params = queries.DesktopQueryParams(
+        bid_browsers=bid_browsers,
+        classes=classes,
+        filter_classes=[],
+        filter_afk=True,
+        include_audible=True,
+        bid_window=bid_window,
+        bid_afk=bid_afk,
     )
+    query = queries.fullDesktopQuery(params)
     logger.debug("Query: \n" + queries.pretty_query(query))
 
     result = obj.client.query(query, [(start, stop)], cache=cache, name=name)

@@ -13,6 +13,7 @@ from typing import List, Tuple, Dict
 from tabulate import tabulate
 
 import aw_client
+from aw_client import queries
 from aw_core import Event
 from aw_transform import flood
 
@@ -72,19 +73,19 @@ def query(regex: str = EXAMPLE_REGEX, save=True):
 
     aw = aw_client.ActivityWatchClient()
 
-    # TODO: Move this query somewhere else, as the equivalent of aw-webui's 'canonicalEvents'
-    res = aw.query(
-        f"""
-    window = flood(query_bucket(find_bucket("aw-watcher-window_")));
-    afk = flood(query_bucket(find_bucket("aw-watcher-afk_")));
-    events = filter_period_intersect(window, filter_keyvals(afk, "status", ["not-afk"]));
-    events = categorize(events, {json.dumps(categories)});
-    events = filter_keyvals(events, "$category", [["Work"]]);
+    canonicalQuery = queries.canonicalEvents(
+        queries.DesktopQueryParams(
+            bid_window="aw-watcher-window_",
+            bid_afk="aw-watcher-afk_",
+        )
+    )
+    query = f"""
+    {canonicalQuery}
     duration = sum_durations(events);
     RETURN = {{"events": events, "duration": duration}};
-    """,
-        timeperiods,
-    )
+    """
+
+    res = aw.query(query, timeperiods)
 
     for break_time in [0, 5 * 60, 10 * 60, 15 * 60]:
         _print(
