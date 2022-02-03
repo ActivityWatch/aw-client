@@ -6,24 +6,28 @@ aw-client
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Typechecking: Mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
 
-
-[**Documentation**](https://activitywatch.readthedocs.io/en/latest/)
-
 Client library for ActivityWatch in Python.
 
-Please see the documentation for usage and examples.
+Please see [the documentation][docs] for usage, and take a look at `examples/`.
 
+ - [Documentation][docs]
+ - [API Reference][apiref]
+
+[docs]: https://docs.activitywatch.net/en/latest/
+[apiref]: https://docs.activitywatch.net/en/latest/api/python.html#aw-client
 
 ## How to install
 
-To install the latest git version directly from github without cloning, run
+Install from pip: `pip install aw-client`
+
+Install the latest version directly from github without cloning, run
 `pip install git+https://github.com/ActivityWatch/aw-client.git`
 
 To install from a cloned version, cd into the directory and run
 `poetry install` to install inside an virtualenv. If you want to install it
 system-wide it can be installed with `pip install .`, but that has the issue
 that it might not get the exact version of the dependencies due to not reading
-the poetry.lock file.
+the `poetry.lock` file.
 
 ## Usage
 
