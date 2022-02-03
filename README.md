@@ -20,14 +20,14 @@ Please see [the documentation][docs] for usage, and take a look at `examples/`.
 
 Install from pip: `pip install aw-client`
 
-Install the latest version directly from github without cloning, run
-`pip install git+https://github.com/ActivityWatch/aw-client.git`
+Install the latest version directly from github without cloning: `pip install git+https://github.com/ActivityWatch/aw-client.git`
 
-To install from a cloned version, cd into the directory and run
-`poetry install` to install inside an virtualenv. If you want to install it
-system-wide it can be installed with `pip install .`, but that has the issue
-that it might not get the exact version of the dependencies due to not reading
-the `poetry.lock` file.
+To install from a cloned version:
+
+ - clone repo: `git clone https://github.com/ActivityWatch/aw-client.git`
+ - cd into the directory: `cd aw-client`
+ - run `poetry install` (will create a virtualenv, if none activated)
+   - If you don't want to use poetry you can also use `pip install .`, but that might not get the exact version of the dependencies (due to not reading the `poetry.lock` file).
 
 ## Usage
 
