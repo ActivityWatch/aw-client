@@ -28,7 +28,7 @@ def _valid_date(s):
     try:
         return datetime.strptime(s, "%Y-%m-%d")
     except ValueError:
-        msg = "Not a valid date: '{0}'.".format(s)
+        msg = f"Not a valid date: '{s}'."
         raise argparse.ArgumentTypeError(msg)
 
 
@@ -85,7 +85,7 @@ def buckets(obj: _Context):
     buckets = obj.client.get_buckets()
     print("Buckets:")
     for bucket in buckets:
-        print(" - {}".format(bucket))
+        print(f" - {bucket}")
 
 
 @main.command(help="Query events from bucket with ID `bucket_id`")
@@ -128,7 +128,7 @@ def query(
         print(json.dumps(result))
     else:
         for period in result:
-            print("Showing 10 out of {} events:".format(len(period)))
+            print(f"Showing 10 out of {len(period)} events:")
             for event in period[:10]:
                 event.pop("id")
                 event.pop("timestamp")
@@ -217,7 +217,7 @@ def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
     print(
         title
         + (
-            " (showing 10 out of {} events)".format(len(events))
+            f" (showing 10 out of {len(events)} events)"
             if len(events) > 10
             else ""
         )
@@ -275,7 +275,7 @@ def canonical(
     for period in result:
         print()
         events = _parse_events(period)
-        print("Showing last 10 out of {} events:".format(len(events)))
+        print(f"Showing last 10 out of {len(events)} events:")
 
         print(
             tabulate(

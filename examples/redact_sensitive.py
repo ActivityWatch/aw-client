@@ -74,7 +74,7 @@ def main():
 
 
 def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
-    print("\nChecking bucket: {}".format(bucket_id))
+    print(f"\nChecking bucket: {bucket_id}")
 
     events = aw.get_events(bucket_id, limit=-1)
     sensitive_ids = _find_sensitive(events, pattern)
