@@ -4,10 +4,10 @@ Lists the most common words among uncategorized events, by duration, to help in 
 This might make more sense as a notebook.
 """
 
-import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from tabulate import tabulate
+from typing import Dict
 
 from aw_core import Event
 import aw_client
@@ -24,14 +24,14 @@ def get_events():
 
     start = datetime(2022, 1, 1, tzinfo=timezone.utc)
     now = datetime.now(tz=timezone.utc)
-    timeperiods = [[start, now]]
+    timeperiods = [(start, now)]
 
     # TODO: Use tools in aw-research to load categories from toml file
     categories = [
-        [
+        (
             ["Work"],
             {"type": "regex", "regex": "aw-|activitywatch", "ignore_case": True},
-        ],
+        ),
     ]
 
     canonicalQuery = queries.canonicalEvents(
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     events = get_events()
 
     # find most common words, by duration
-    corpus = Counter()
+    corpus: Dict[str, timedelta] = Counter()  # type: ignore
     for word, duration in events2words(events):
         if word not in corpus:
             corpus[word] = timedelta(0)
@@ -78,4 +78,4 @@ if __name__ == "__main__":
 
     # The top words are rarely useful for categorization, as they are usually browsers and other categories
     # of activity which are too broad for it to make sense as a rule (except as a fallback).
-    print(tabulate(corpus.most_common(50), headers=["word", "duration"]))
+    print(tabulate(corpus.most_common(50), headers=["word", "duration"]))  # type: ignore

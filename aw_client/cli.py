@@ -257,21 +257,13 @@ def canonical(
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    bid_browsers: List[str] = []
     classes = default_classes
-    filter_classes: List[List[str]] = []
-    filter_afk: bool = True
-    include_audible: bool = True
 
     query = queries.canonicalEvents(
         queries.DesktopQueryParams(
-            bid_browsers,
-            classes,
-            filter_classes,
-            filter_afk,
-            include_audible,
-            bid_window,
-            bid_afk,
+            bid_window=bid_window,
+            bid_afk=bid_afk,
+            classes=classes,
         )
     )
     query = f"""{query}\n RETURN = events;"""

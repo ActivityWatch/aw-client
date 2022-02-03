@@ -225,20 +225,9 @@ def fullDesktopQuery(
     params: DesktopQueryParams,
 ) -> str:
     # Escape `"`
-    browserbuckets = [escape_doublequote(bucket) for bucket in params.bid_browsers]
-    windowbucket = escape_doublequote(params.bid_window)
-    afkbucket = escape_doublequote(params.bid_afk)
-
-    # TODO: Get classes
-    params: DesktopQueryParams = DesktopQueryParams(
-        bid_window=windowbucket,
-        bid_afk=afkbucket,
-        bid_browsers=browserbuckets,
-        classes=params.classes,
-        filter_classes=params.filter_classes,
-        filter_afk=params.filter_afk,
-        include_audible=params.include_audible,
-    )
+    params.bid_window = escape_doublequote(params.bid_window)
+    params.bid_afk = escape_doublequote(params.bid_afk)
+    params.bid_browsers = [escape_doublequote(bucket) for bucket in params.bid_browsers]
 
     return (
         f"""
@@ -288,7 +277,7 @@ def test_fullDesktopQuery():
     now = datetime.now(tz=timezone.utc)
     start = now - timedelta(days=7)
     end = now
-    timeperiods = [[start, end]]
+    timeperiods = [(start, end)]
     query = fullDesktopQuery(params)
 
     awc = aw_client.ActivityWatchClient("test")
