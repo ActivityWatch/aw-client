@@ -216,11 +216,7 @@ def _parse_events(events: List[dict]) -> List[Event]:
 def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
     print(
         title
-        + (
-            f" (showing 10 out of {len(events)} events)"
-            if len(events) > 10
-            else ""
-        )
+        + (f" (showing 10 out of {len(events)} events)" if len(events) > 10 else "")
     )
     print(
         tabulate(
