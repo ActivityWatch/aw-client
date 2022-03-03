@@ -44,7 +44,7 @@ tests_no_zope = ["coverage[toml] (>=5.0.2)", "hypothesis", "pympler", "pytest (>
 
 [[package]]
 name = "aw-core"
-version = "0.5.8"
+version = "0.5.9"
 description = "Core library for ActivityWatch"
 category = "main"
 optional = false
@@ -602,8 +602,8 @@ attrs = [
     {file = "attrs-21.4.0.tar.gz", hash = "sha256:626ba8234211db98e869df76230a137c4c40a12d72445c45d5f5b716f076e2fd"},
 ]
 aw-core = [
-    {file = "aw-core-0.5.8.tar.gz", hash = "sha256:47927c8d1bab7d7837589226af89f2871b60b7e69ccdc90f480b20d362450d41"},
-    {file = "aw_core-0.5.8-py3-none-any.whl", hash = "sha256:18262729514c5196b915ffc142d98b07e2d743d92d00e2c76e49b601edc4a280"},
+    {file = "aw-core-0.5.9.tar.gz", hash = "sha256:81149f6a971f192aa91183066f78f2bdb4c14de826f79b6607b3b52984f2ddb8"},
+    {file = "aw_core-0.5.9-py3-none-any.whl", hash = "sha256:4f725d42ce11f5f7f1f6883811a925214bdaf114a4e68cfa58ce8a66cc23cfc6"},
 ]
 certifi = [
     {file = "certifi-2021.10.8-py2.py3-none-any.whl", hash = "sha256:d62a0163eb4c2344ac042ab2bdf75399a71a2d8c7d47eac2e2ee91b9d6339569"},
