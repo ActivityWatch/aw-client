@@ -135,6 +135,23 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
+    def get_event(
+        self,
+        bucket_id: str,
+        event_id: int,
+    ) -> Event:
+        endpoint = f"buckets/{bucket_id}/events/{event_id}"
+        event = self._get(endpoint).json()
+        return Event(**event)
+
+    def delete_event(
+        self,
+        bucket_id: str,
+        event_id: int,
+    ) -> None:
+        endpoint = f"buckets/{bucket_id}/events/{event_id}"
+        self._delete(endpoint).json()
+
     def get_events(
         self,
         bucket_id: str,
