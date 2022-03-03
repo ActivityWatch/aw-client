@@ -139,10 +139,16 @@ class ActivityWatchClient:
         self,
         bucket_id: str,
         event_id: int,
-    ) -> Event:
+    ) -> Optional[Event]:
         endpoint = f"buckets/{bucket_id}/events/{event_id}"
-        event = self._get(endpoint).json()
-        return Event(**event)
+        try:
+            event = self._get(endpoint).json()
+            return Event(**event)
+        except req.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            else:
+                raise
 
     def delete_event(
         self,

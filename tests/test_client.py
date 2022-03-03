@@ -79,8 +79,7 @@ def test_full():
 
         # Delete single event
         client.delete_event(bucket_name, fetched_events[1].id)
-        with pytest.raises(ValueError):
-            client.get_event(bucket_name, fetched_events[1].id)
+        assert client.get_event(bucket_name, fetched_events[1].id) is None
 
         # Test exception raising
         with pytest.raises(ValueError):
