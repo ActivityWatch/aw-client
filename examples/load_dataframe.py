@@ -20,7 +20,7 @@ RETURN = {"events": events};
 
 def main() -> None:
     now = datetime.now(tz=timezone.utc)
-    td30d = timedelta(days=7)
+    td30d = timedelta(days=30)
 
     aw = ActivityWatchClient()
     print("Querying...")

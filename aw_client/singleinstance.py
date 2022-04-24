@@ -36,7 +36,7 @@ class SingleInstance:
             self.fp = open(self.lockfile, "w")
             try:
                 fcntl.lockf(self.fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except IOError:
+            except OSError:
                 logger.error("Another instance is already running, quitting.")
                 sys.exit(-1)
 

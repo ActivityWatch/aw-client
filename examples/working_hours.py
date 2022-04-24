@@ -1,13 +1,25 @@
+"""
+Script that computes how many hours was spent in a regex-specified "work" category for each day in a given month.
+
+Also saves the matching work-events to a JSON file (for auditing purposes).
+"""
+
 import json
 import re
-from datetime import datetime, timedelta, timezone, time
+import os
+from datetime import datetime, timedelta, time
 from typing import List, Tuple, Dict
 
 from tabulate import tabulate
 
 import aw_client
+from aw_client import queries
 from aw_core import Event
 from aw_transform import flood
+
+
+EXAMPLE_REGEX = r"activitywatch|algobit|defiarb|github.com"
+OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
 
 
 def _pretty_timedelta(td: timedelta) -> str:
@@ -35,7 +47,7 @@ def generous_approx(events: List[dict], max_break: float) -> timedelta:
     )
 
 
-def query():
+def query(regex: str = EXAMPLE_REGEX, save=True):
     print("Querying events...")
     td1d = timedelta(days=1)
     day_offset = timedelta(hours=4)
@@ -53,7 +65,7 @@ def query():
             ["Work"],
             {
                 "type": "regex",
-                "regex": r"activitywatch|algobit|defiarb|github.com",
+                "regex": regex,
                 "ignore_case": True,
             },
         )
@@ -61,26 +73,25 @@ def query():
 
     aw = aw_client.ActivityWatchClient()
 
-    # TODO: Move this query somewhere else, as the equivalent of aw-webui's 'canonicalEvents'
-    res = aw.query(
-        f"""
-    window = flood(query_bucket(find_bucket("aw-watcher-window_")));
-    afk = flood(query_bucket(find_bucket("aw-watcher-afk_")));
-    events = filter_period_intersect(window, filter_keyvals(afk, "status", ["not-afk"]));
-    events = categorize(events, {json.dumps(categories)});
-    events = filter_keyvals(events, "$category", [["Work"]]);
+    canonicalQuery = queries.canonicalEvents(
+        queries.DesktopQueryParams(
+            bid_window="aw-watcher-window_",
+            bid_afk="aw-watcher-afk_",
+        )
+    )
+    query = f"""
+    {canonicalQuery}
     duration = sum_durations(events);
     RETURN = {{"events": events, "duration": duration}};
-    """,
-        timeperiods,
-    )
+    """
+
+    res = aw.query(query, timeperiods)
 
     for break_time in [0, 5 * 60, 10 * 60, 15 * 60]:
         _print(
             timeperiods, res, break_time, {"category_rule": categories[0][1]["regex"]}
         )
 
-    save = True
     if save:
         fn = "working_hours_events.json"
         with open(fn, "w") as f:
@@ -110,6 +121,7 @@ def _print(timeperiods, res, break_time, params: dict):
                 "left",
                 "right",
             ),
+            tablefmt="html" if OUTPUT_HTML else "simple",
         )
     )
 

@@ -73,6 +73,14 @@ def test_full():
         assert len(result) == 1
         assert len(result[0]) == 3
 
+        # Get single event
+        e = client.get_event(bucket_name, fetched_events[1].id)
+        assert e.id == fetched_events[1].id
+
+        # Delete single event
+        client.delete_event(bucket_name, fetched_events[1].id)
+        assert client.get_event(bucket_name, fetched_events[1].id) is None
+
         # Test exception raising
         with pytest.raises(ValueError):
             # timeperiod end time does not have a timezone set

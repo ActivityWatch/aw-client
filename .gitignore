@@ -6,3 +6,4 @@ dist
 *.swp
 .*cache
 *.json
+secret.env

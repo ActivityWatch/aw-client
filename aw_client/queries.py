@@ -7,10 +7,13 @@ Most of these are from: https://github.com/ActivityWatch/aw-webui/blob/master/sr
 import json
 import re
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 from typing import List, Union, Tuple, Optional
 from typing_extensions import TypeGuard
+
+import aw_client
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -22,24 +25,45 @@ class EnhancedJSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-@dataclass
-class QueryParams:
-    bid_browsers: List[str]
-    classes: List[Tuple[List[str], dict]]
-    filter_classes: List[List[str]]
-    filter_afk: bool
-    include_audible: bool
+"""
+Do these dataclasses look confusing?
+Read up on dataclass inheritance: https://stackoverflow.com/a/53085935/965332
+"""
 
 
 @dataclass
-class DesktopQueryParams(QueryParams):
+class _QueryParamsDefaultsBase:
+    bid_browsers: List[str] = field(default_factory=list)
+    classes: List[Tuple[List[str], dict]] = field(default_factory=list)
+    filter_classes: List[List[str]] = field(default_factory=list)
+    filter_afk: bool = True
+    include_audible: bool = True
+
+
+@dataclass
+class QueryParams(_QueryParamsDefaultsBase):
+    pass
+
+
+@dataclass
+class _DesktopQueryParamsBase:
     bid_window: str
     bid_afk: str
 
 
 @dataclass
-class AndroidQueryParams(QueryParams):
+class DesktopQueryParams(QueryParams, _DesktopQueryParamsBase):
+    pass
+
+
+@dataclass
+class _AndroidQueryParamsBase:
     bid_android: str
+
+
+@dataclass
+class AndroidQueryParams(QueryParams, _AndroidQueryParamsBase):
+    pass
 
 
 def isDesktopParams(params: QueryParams) -> TypeGuard[DesktopQueryParams]:
@@ -67,14 +91,14 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
     return "\n".join(
         [
             # Fetch window/app events
-            f'events = flood(query_bucket("{bid_window}"));',
+            f'events = flood(query_bucket(find_bucket("{bid_window}")));',
             # On Android, merge events to avoid overload of events
             'events = merge_events_by_keys(events, ["app"]);'
             if isAndroidParams(params)
             else "",
             # Fetch not-afk events
             f"""
-            not_afk = flood(query_bucket("{params.bid_afk}"));
+            not_afk = flood(query_bucket(find_bucket("{params.bid_afk}")));
             not_afk = filter_keyvals(not_afk, "status", ["not-afk"]);
             """
             if isDesktopParams(params)
@@ -198,29 +222,12 @@ def escape_doublequote(s: str) -> str:
 
 
 def fullDesktopQuery(
-    browserbuckets: List[str],
-    windowbucket: str,
-    afkbucket: str,
-    filterAFK: bool,
-    classes: List[Tuple[List[str], dict]],
-    filterCategories: List[List[str]],
-    include_audible: bool,
+    params: DesktopQueryParams,
 ) -> str:
     # Escape `"`
-    browserbuckets = [escape_doublequote(bucket) for bucket in browserbuckets]
-    windowbucket = escape_doublequote(windowbucket)
-    afkbucket = escape_doublequote(afkbucket)
-
-    # TODO: Get classes
-    params: DesktopQueryParams = DesktopQueryParams(
-        bid_window=windowbucket,
-        bid_afk=afkbucket,
-        bid_browsers=browserbuckets,
-        classes=classes,
-        filter_classes=filterCategories,
-        filter_afk=filterAFK,
-        include_audible=include_audible,
-    )
+    params.bid_window = escape_doublequote(params.bid_window)
+    params.bid_afk = escape_doublequote(params.bid_afk)
+    params.bid_browsers = [escape_doublequote(bucket) for bucket in params.bid_browsers]
 
     return (
         f"""
@@ -244,6 +251,7 @@ def fullDesktopQuery(
       """
         + """
       RETURN = {
+          "events": events,
           "window": {
               "app_events": app_events,
               "title_events": title_events,
@@ -259,3 +267,24 @@ def fullDesktopQuery(
       };
       """
     )
+
+
+def test_fullDesktopQuery():
+    params = DesktopQueryParams(
+        bid_window="aw-watcher-window_",
+        bid_afk="aw-watcher-afk_",
+    )
+    now = datetime.now(tz=timezone.utc)
+    start = now - timedelta(days=7)
+    end = now
+    timeperiods = [(start, end)]
+    query = fullDesktopQuery(params)
+
+    awc = aw_client.ActivityWatchClient("test")
+    res = awc.query(query, timeperiods)[0]
+    events = res["events"]
+    print(len(events))
+
+
+if __name__ == "__main__":
+    test_fullDesktopQuery()

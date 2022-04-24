@@ -28,7 +28,7 @@ def _valid_date(s):
     try:
         return datetime.strptime(s, "%Y-%m-%d")
     except ValueError:
-        msg = "Not a valid date: '{0}'.".format(s)
+        msg = f"Not a valid date: '{s}'."
         raise argparse.ArgumentTypeError(msg)
 
 
@@ -85,7 +85,7 @@ def buckets(obj: _Context):
     buckets = obj.client.get_buckets()
     print("Buckets:")
     for bucket in buckets:
-        print(" - {}".format(bucket))
+        print(f" - {bucket}")
 
 
 @main.command(help="Query events from bucket with ID `bucket_id`")
@@ -128,7 +128,7 @@ def query(
         print(json.dumps(result))
     else:
         for period in result:
-            print("Showing 10 out of {} events:".format(len(period)))
+            print(f"Showing 10 out of {len(period)} events:")
             for event in period[:10]:
                 event.pop("id")
                 event.pop("timestamp")
@@ -169,22 +169,20 @@ def report(
 
     bid_browsers: List[str] = []
 
+    # TODO: Allow loading from toml
     logger.info("Using default classes")
     classes = default_classes
 
-    filter_classes: List[List[str]] = []
-    filter_afk: bool = True
-    include_audible: bool = True
-
-    query = queries.fullDesktopQuery(
-        bid_browsers,
-        bid_window,
-        bid_afk,
-        filter_afk,
-        classes,
-        filter_classes,
-        include_audible,
+    params = queries.DesktopQueryParams(
+        bid_browsers=bid_browsers,
+        classes=classes,
+        filter_classes=[],
+        filter_afk=True,
+        include_audible=True,
+        bid_window=bid_window,
+        bid_afk=bid_afk,
     )
+    query = queries.fullDesktopQuery(params)
     logger.debug("Query: \n" + queries.pretty_query(query))
 
     result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
@@ -218,11 +216,7 @@ def _parse_events(events: List[dict]) -> List[Event]:
 def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
     print(
         title
-        + (
-            " (showing 10 out of {} events)".format(len(events))
-            if len(events) > 10
-            else ""
-        )
+        + (f" (showing 10 out of {len(events)} events)" if len(events) > 10 else "")
     )
     print(
         tabulate(
@@ -259,21 +253,13 @@ def canonical(
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    bid_browsers: List[str] = []
     classes = default_classes
-    filter_classes: List[List[str]] = []
-    filter_afk: bool = True
-    include_audible: bool = True
 
     query = queries.canonicalEvents(
         queries.DesktopQueryParams(
-            bid_browsers,
-            classes,
-            filter_classes,
-            filter_afk,
-            include_audible,
-            bid_window,
-            bid_afk,
+            bid_window=bid_window,
+            bid_afk=bid_afk,
+            classes=classes,
         )
     )
     query = f"""{query}\n RETURN = events;"""
@@ -285,7 +271,7 @@ def canonical(
     for period in result:
         print()
         events = _parse_events(period)
-        print("Showing last 10 out of {} events:".format(len(events)))
+        print(f"Showing last 10 out of {len(events)} events:")
 
         print(
             tabulate(

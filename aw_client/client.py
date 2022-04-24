@@ -28,7 +28,7 @@ def _log_request_exception(e: req.RequestException):
     logger.warning(str(e))
     try:
         d = r.json()
-        logger.warning("Error message received: {}".format(d))
+        logger.warning(f"Error message received: {d}")
     except json.JSONDecodeError:
         pass
 
@@ -86,7 +86,7 @@ class ActivityWatchClient:
         )
 
         self.instance = SingleInstance(
-            "{}-at-{}-on-{}".format(self.client_name, server_host, server_port)
+            f"{self.client_name}-at-{server_host}-on-{server_port}"
         )
 
         self.commit_interval = client_config["commit_interval"]
@@ -100,7 +100,7 @@ class ActivityWatchClient:
     #
 
     def _url(self, endpoint: str):
-        return "{}/api/0/{}".format(self.server_address, endpoint)
+        return f"{self.server_address}/api/0/{endpoint}"
 
     @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
@@ -135,6 +135,29 @@ class ActivityWatchClient:
     #   Event get/post requests
     #
 
+    def get_event(
+        self,
+        bucket_id: str,
+        event_id: int,
+    ) -> Optional[Event]:
+        endpoint = f"buckets/{bucket_id}/events/{event_id}"
+        try:
+            event = self._get(endpoint).json()
+            return Event(**event)
+        except req.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            else:
+                raise
+
+    def delete_event(
+        self,
+        bucket_id: str,
+        event_id: int,
+    ) -> None:
+        endpoint = f"buckets/{bucket_id}/events/{event_id}"
+        self._delete(endpoint).json()
+
     def get_events(
         self,
         bucket_id: str,
@@ -142,7 +165,7 @@ class ActivityWatchClient:
         start: datetime = None,
         end: datetime = None,
     ) -> List[Event]:
-        endpoint = "buckets/{}/events".format(bucket_id)
+        endpoint = f"buckets/{bucket_id}/events"
 
         params = dict()  # type: Dict[str, str]
         if limit is not None:
@@ -156,12 +179,12 @@ class ActivityWatchClient:
         return [Event(**event) for event in events]
 
     def insert_event(self, bucket_id: str, event: Event) -> None:
-        endpoint = "buckets/{}/events".format(bucket_id)
+        endpoint = f"buckets/{bucket_id}/events"
         data = [event.to_json_dict()]
         self._post(endpoint, data)
 
     def insert_events(self, bucket_id: str, events: List[Event]) -> None:
-        endpoint = "buckets/{}/events".format(bucket_id)
+        endpoint = f"buckets/{bucket_id}/events"
         data = [event.to_json_dict() for event in events]
         self._post(endpoint, data)
 
@@ -180,7 +203,7 @@ class ActivityWatchClient:
         start: datetime = None,
         end: datetime = None,
     ) -> int:
-        endpoint = "buckets/{}/events/count".format(bucket_id)
+        endpoint = f"buckets/{bucket_id}/events/count"
 
         params = dict()  # type: Dict[str, str]
         if start is not None:
@@ -214,7 +237,7 @@ class ActivityWatchClient:
 
         from aw_transform.heartbeats import heartbeat_merge
 
-        endpoint = "buckets/{}/heartbeat?pulsetime={}".format(bucket_id, pulsetime)
+        endpoint = f"buckets/{bucket_id}/heartbeat?pulsetime={pulsetime}"
         _commit_interval = commit_interval or self.commit_interval
 
         if queued:
@@ -255,7 +278,7 @@ class ActivityWatchClient:
         if queued:
             self.request_queue.register_bucket(bucket_id, event_type)
         else:
-            endpoint = "buckets/{}".format(bucket_id)
+            endpoint = f"buckets/{bucket_id}"
             data = {
                 "client": self.client_name,
                 "hostname": self.client_hostname,
@@ -264,7 +287,7 @@ class ActivityWatchClient:
             self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str, force: bool = False):
-        self._delete("buckets/{}".format(bucket_id) + ("?force=1" if force else ""))
+        self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
@@ -276,7 +299,7 @@ class ActivityWatchClient:
         return self._get("export").json()
 
     def export_bucket(self, bucket_id) -> dict:
-        return self._get("buckets/{}/export".format(bucket_id)).json()
+        return self._get(f"buckets/{bucket_id}/export").json()
 
     def import_bucket(self, bucket: dict) -> None:
         endpoint = "import"
