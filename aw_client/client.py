@@ -190,10 +190,8 @@ class ActivityWatchClient:
 
     def delete_event(self, bucket_id: str, event: Event) -> None:
         if event.id is None:
-            raise ValueError(
-                "Cannot delete an event: event ID is undefined."
-            )
-        endpoint = "buckets/{}/events/{}".format(bucket_id, event.id)
+            raise ValueError("Cannot delete an event: event ID is undefined.")
+        endpoint = f"buckets/{bucket_id}/events/{event.id}"
         self._delete(endpoint)
 
     def get_eventcount(
