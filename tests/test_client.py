@@ -89,5 +89,18 @@ def test_full():
                 timeperiods=[(now - timedelta(hours=1), datetime.now())],
             )
 
+        # Create and delete an event: check that it no longer exists
+        e_del = create_unique_event()
+        client.insert_event(bucket_name, e_del)
+        fetched_events = client.get_events(bucket_name)
+        assert (e_del.timestamp, e_del.duration, e_del.data) in [
+                (e.timestamp, e.duration, e.data) for e in fetched_events]
+
+        e_del_fetched = [e for e in fetched_events if e.data == e_del.data][0]
+        client.delete_event(bucket_name, e_del_fetched)
+        fetched_events = client.get_events(bucket_name)
+        assert (e_del.timestamp, e_del.duration, e_del.data) not in [
+                (e.timestamp, e.duration, e.data) for e in fetched_events]
+
         # Delete bucket
         client.delete_bucket(bucket_name)

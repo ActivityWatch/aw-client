@@ -67,7 +67,7 @@ def main():
     if bid_to_redact == "*":
         for bucket_id in buckets.keys():
             if bucket_id.startswith("aw-watcher-afk"):
-                return
+                continue
             _redact_bucket(bucket_id, pattern)
     else:
         _redact_bucket(bid_to_redact, pattern)
@@ -97,6 +97,7 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
                 if DRYRUN:
                     print("DRYRUN, would do: aw.insert_event(bucket_id, e)")
                 else:
+                    aw.delete_event(bucket_id, e_before)
                     aw.insert_event(bucket_id, e)
                     print("Redacted event")
 
