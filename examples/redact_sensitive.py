@@ -10,7 +10,7 @@ Issues/improvements:
 
 import re
 import sys
-from typing import List, Set, Pattern, Union
+from typing import List, Set, Pattern, Union, cast
 from copy import deepcopy
 
 from aw_core import Event
@@ -76,6 +76,7 @@ def main():
 def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
     print(f"\nChecking bucket: {bucket_id}")
 
+    global aw
     events = aw.get_events(bucket_id, limit=-1)
     sensitive_ids = _find_sensitive(events, pattern)
     print(f"Found {len(sensitive_ids)} sensitive events")
@@ -97,7 +98,7 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
                 if DRYRUN:
                     print("DRYRUN, would do: aw.insert_event(bucket_id, e)")
                 else:
-                    aw.delete_event(bucket_id, e_before)
+                    aw.delete_event(bucket_id, cast(int, e_before.id))
                     aw.insert_event(bucket_id, e)
                     print("Redacted event")
 
