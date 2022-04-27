@@ -16,7 +16,7 @@ packages = [
 aw-client = "aw_client.cli:main"
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.8"
 aw-core = "^0.5.7"
 requests = "*"
 persist-queue = "*"
