@@ -17,7 +17,7 @@ PYFILES=aw_client/*.py examples/*.py
 
 lint-fix:
 	pyupgrade --py37-plus ${PYFILES}
-	black ${PYFILES}
+	black .
 
 clean:
 	rm -rf build dist
