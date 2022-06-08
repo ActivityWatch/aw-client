@@ -75,7 +75,7 @@ def isAndroidParams(params: QueryParams) -> TypeGuard[AndroidQueryParams]:
 
 
 def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> str:
-    # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unecessary escaping)
+    # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
     classes_str = json.dumps(params.classes, cls=EnhancedJSONEncoder)
     classes_str = re.sub(r"\\\\", r"\\", classes_str)
 
