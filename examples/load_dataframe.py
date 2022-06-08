@@ -7,15 +7,22 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from aw_client import ActivityWatchClient
+from aw_client.queries import canonicalEvents, DesktopQueryParams
+from aw_client.classes import default_classes
 
 
-_query = """
-window = flood(query_bucket(find_bucket("aw-watcher-window_")));
-afk = flood(query_bucket(find_bucket("aw-watcher-afk_")));
-afk = filter_keyvals(afk, "status", ["not-afk"]);
-events = filter_period_intersect(window, afk);
-RETURN = {"events": events};
-"""
+def build_query() -> str:
+    canonicalQuery = canonicalEvents(
+        DesktopQueryParams(
+            bid_window="aw-watcher-window_",
+            bid_afk="aw-watcher-afk_",
+            classes=default_classes,
+        )
+    )
+    return f"""
+    {canonicalQuery}
+    RETURN = {{"events": events}};
+    """
 
 
 def main() -> None:
@@ -24,7 +31,8 @@ def main() -> None:
 
     aw = ActivityWatchClient()
     print("Querying...")
-    data = aw.query(_query, [(now - td30d, now)])
+    query = build_query()
+    data = aw.query(query, [(now - td30d, now)])
 
     events = [
         {
@@ -34,6 +42,9 @@ def main() -> None:
         }
         for e in data[0]["events"]
     ]
+
+    for e in events:
+        e["$category"] = " > ".join(e["$category"])
 
     df = pd.json_normalize(events)
     df["timestamp"] = pd.to_datetime(df["timestamp"], infer_datetime_format=True)
