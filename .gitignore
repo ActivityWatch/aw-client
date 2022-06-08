@@ -1,9 +1,14 @@
-*.pyc
-__pycache__
-*.egg-info
 build
 dist
-*.swp
-.*cache
-*.json
 secret.env
+
+# Cache files
+*.pyc
+__pycache__
+.*cache
+*.egg-info
+*.swp
+
+# Output from example scripts
+*.json
+*.csv

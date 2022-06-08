@@ -1,4 +1,4 @@
-.PHONY: build test typecheck clean
+.PHONY: build test typecheck clean examples
 
 build:
 	poetry install
@@ -9,6 +9,10 @@ test:
 
 test-integration:
 	pytest -v tests/test_client.py
+
+test-examples:
+	cd examples; yes | python3 load_dataframe.py
+	cd examples; python3 working_hours.py
 
 typecheck:
 	poetry run mypy
