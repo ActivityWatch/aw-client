@@ -68,5 +68,7 @@ Commands:
 The [`examples/`](examples/) directory contains a couple of example scripts, including:
 
  - [`time_spent_today.py`](examples/time_spent_today.py) - fetches all non-afk events and sums their duration to get the total active time for the day.
+ - [`working_hours.py`](https://github.com/ActivityWatch/aw-client/blob/master/examples/working_hours.py) - computes hours worked per day (matching a "work" category rule), and exports matching events to a JSON file (for auditing).
+ - [`load_dataframe.py`](https://github.com/ActivityWatch/aw-client/blob/master/examples/load_dataframe.py) - loads events from a host using a categorizing & AFK-filtering query, put result in a pandas dataframe, and export as CSV.
  - [`merge_buckets.py`](examples/merge_buckets.py) - merges two buckets with non-intersecting events by moving all events from one into the other.
  - [`redact_sensitive.py`](examples/redact_sensitive.py) - redact sensitive events.
