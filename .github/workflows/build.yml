@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-18.04, windows-latest, macOS-latest]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
         python_version: [3.8]
 
     steps:
@@ -39,14 +39,6 @@ jobs:
         source venv/bin/activate || source venv/Scripts/activate
         make build
 
-    - name: Set up ActivityWatch
-      uses: ActivityWatch/setup-action@master
-      with:
-        aw-server: "aw-server"
-        aw-version: "v0.12.0b2"
-        aw-testing: false
-        fakedata: true
-
     - name: Run tests
       shell: bash
       run: |
@@ -54,10 +46,3 @@ jobs:
         make test
         make typecheck
         #bash <(curl -s https://codecov.io/bash)
-
-    - name: Run examples
-      shell: bash
-      run: |
-        source venv/bin/activate || source venv/Scripts/activate
-        pip install pandas  # needed for one of the examples
-        make test-examples
