@@ -54,9 +54,9 @@ def main(read_stdin=True) -> None:
     smtp_username = os.environ["SMTP_USERNAME"].strip()
     smtp_password = os.environ["SMTP_PASSWORD"].strip()
 
-    assert smtp_server, "Enviroment variable SMTP_SERVER not set"
-    assert smtp_username, "Enviroment variable SMTP_USERNAME not set"
-    assert smtp_password, "Enviroment variable SMTP_PASSWORD not set"
+    assert smtp_server, "Environment variable SMTP_SERVER not set"
+    assert smtp_username, "Environment variable SMTP_USERNAME not set"
+    assert smtp_password, "Environment variable SMTP_PASSWORD not set"
 
     sender = Recipient("ActivityWatch (automated script)", "noreply@activitywatch.net")
     receiver = Recipient("Erik Bjäreholt", "erik.bjareholt@gmail.com")
