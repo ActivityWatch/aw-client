@@ -77,6 +77,8 @@ def query(regex: str = EXAMPLE_REGEX, save=True):
         queries.DesktopQueryParams(
             bid_window="aw-watcher-window_",
             bid_afk="aw-watcher-afk_",
+            classes=categories,
+            filter_classes=[["Work"]]
         )
     )
     query = f"""
