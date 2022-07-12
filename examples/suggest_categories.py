@@ -7,17 +7,28 @@ This might make more sense as a notebook.
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from tabulate import tabulate
-from typing import Dict
+from typing import Dict, List, Tuple, Any
 
 from aw_core import Event
 import aw_client
 from aw_client import queries
 
+
 # set up client
 awc = aw_client.ActivityWatchClient("test")
 
 
-def get_events():
+def example_categories():
+    # TODO: Use tools in aw-research to load categories from toml file
+    return [
+        (
+            ("Work", "ActivityWatch"),
+            {"type": "regex", "regex": "aw-|activitywatch", "ignore_case": True},
+        ),
+    ]
+
+
+def get_events(categories=List[Tuple[Tuple[str], Dict[str, Any]]]):
     """
     Retrieves AFK-filtered events, only returns events which are Uncategorized.
     """
@@ -25,14 +36,6 @@ def get_events():
     start = datetime(2022, 1, 1, tzinfo=timezone.utc)
     now = datetime.now(tz=timezone.utc)
     timeperiods = [(start, now)]
-
-    # TODO: Use tools in aw-research to load categories from toml file
-    categories = [
-        (
-            ["Work"],
-            {"type": "regex", "regex": "aw-|activitywatch", "ignore_case": True},
-        ),
-    ]
 
     canonicalQuery = queries.canonicalEvents(
         queries.DesktopQueryParams(
@@ -66,8 +69,9 @@ def events2words(events):
                         yield (word, e.duration)
 
 
-if __name__ == "__main__":
-    events = get_events()
+def main():
+    categories = example_categories()
+    events = get_events(categories)
 
     # find most common words, by duration
     corpus: Dict[str, timedelta] = Counter()  # type: ignore
@@ -79,3 +83,7 @@ if __name__ == "__main__":
     # The top words are rarely useful for categorization, as they are usually browsers and other categories
     # of activity which are too broad for it to make sense as a rule (except as a fallback).
     print(tabulate(corpus.most_common(50), headers=["word", "duration"]))  # type: ignore
+
+
+if __name__ == "__main__":
+    main()
