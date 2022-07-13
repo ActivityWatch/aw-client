@@ -1,17 +1,19 @@
 # NOTE: Might not treat timezones correctly.
 
 from datetime import datetime, time, timedelta
-import aw_client
 import socket
 
-# Set this to your AFK bucket
-bucket_id = f"aw-watcher-afk_{socket.gethostname()}"
+import aw_client
 
-daystart = datetime.combine(datetime.now().date(), time())
-dayend = daystart + timedelta(days=1)
+if __name__ == "__main__":
+    # Set this to your AFK bucket
+    bucket_id = f"aw-watcher-afk_{socket.gethostname()}"
 
-awc = aw_client.ActivityWatchClient("testclient")
-events = awc.get_events(bucket_id, start=daystart, end=dayend)
-events = [e for e in events if e.data["status"] == "not-afk"]
-total_duration = sum((e.duration for e in events), timedelta())
-print(f"Total time spent on computer today: {total_duration}")
+    daystart = datetime.combine(datetime.now().date(), time())
+    dayend = daystart + timedelta(days=1)
+
+    awc = aw_client.ActivityWatchClient("testclient")
+    events = awc.get_events(bucket_id, start=daystart, end=dayend)
+    events = [e for e in events if e.data["status"] == "not-afk"]
+    total_duration = sum((e.duration for e in events), timedelta())
+    print(f"Total time spent on computer today: {total_duration}")
