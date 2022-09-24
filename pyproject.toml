@@ -25,7 +25,7 @@ tabulate = "*"
 typing-extensions = "*"
 
 [tool.poetry.dev-dependencies]
-pytest = "^6.0"
+pytest = "^7.0"
 pytest-cov = "*"
 mypy = "*"
 pylint = "*"
