@@ -45,4 +45,9 @@ jobs:
         source venv/bin/activate || source venv/Scripts/activate
         make test
         make typecheck
-        #bash <(curl -s https://codecov.io/bash)
+
+    - name: Report coverage
+      shell: bash
+      run: |
+        # Allow to fail, since sometimes codecov servers are grumpy
+        bash <(curl -s https://codecov.io/bash) || true
