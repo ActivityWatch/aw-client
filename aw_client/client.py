@@ -1,22 +1,29 @@
+import functools
 import json
 import logging
-import socket
 import os
+import socket
 import threading
-import functools
-from datetime import datetime
 from collections import namedtuple
-from typing import Optional, List, Any, Union, Dict, Callable, Tuple
+from datetime import datetime
+from time import sleep
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
-import requests as req
 import persistqueue
-
-from aw_core.models import Event
+import requests as req
 from aw_core.dirs import get_data_dir
+from aw_core.models import Event
 
 from .config import load_config
 from .singleinstance import SingleInstance
-
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -445,18 +452,46 @@ class RequestQueue(threading.Thread):
     def _dispatch_request(self) -> None:
         request = self._get_next()
         if not request:
-            self.wait(0.1)  # seconds to wait before re-polling the empty queue
+            self.wait(0.2)  # seconds to wait before re-polling the empty queue
             return
 
         try:
             self.client._post(request.endpoint, request.data)
-        except req.RequestException as e:
+        except req.exceptions.ConnectTimeout:
+            # Triggered by:
+            #   - server not running (connection refused)
+            #   - server not responding (timeout)
+            # Safe to retry according to requests docs:
+            #   https://requests.readthedocs.io/en/latest/api/#requests.ConnectTimeout
+
             self.connected = False
             logger.warning(
-                "Failed to send request to aw-server, will queue requests until connection is available."
+                "Connection refused or timeout, will queue requests until connection is available."
             )
+            # wait a bit before retrying, so we don't spam the server (or logs), see:
+            #  - https://github.com/ActivityWatch/activitywatch/issues/815
+            #  - https://github.com/ActivityWatch/activitywatch/issues/756#issuecomment-1266662861
+            sleep(0.5)
             return
+        except req.RequestException as e:
+            if e.response and e.response.status_code == 400:
+                # HTTP 400 - Bad request
+                # Example case: https://github.com/ActivityWatch/activitywatch/issues/815
+                # We don't want to retry, because a bad payload is likely to fail forever.
+                logger.error("Bad request, not retrying: {}".format(request.data))
+            elif e.response and e.response.status_code == 500:
+                # HTTP 500 - Internal server error
+                # It is possible that the server is in a bad state (and will recover on restart),
+                # in which case we want to retry. I hope this can never caused by a bad payload.
+                logger.error("Internal server error, retrying: {}".format(request.data))
+                sleep(0.5)
+                return
+            else:
+                logger.exception("Unknown error, not retrying: {}".format(request.data))
+        except Exception:
+            logger.exception("Unknown error, not retrying: {}".format(request.data))
 
+        # Mark the request as done
         self._task_done()
 
     def run(self) -> None:
