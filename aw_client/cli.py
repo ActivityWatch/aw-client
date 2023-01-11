@@ -3,7 +3,7 @@ import json
 import argparse
 import logging
 import textwrap
-from typing import List
+from typing import Optional, List
 from datetime import timedelta, datetime, timezone
 
 import click
@@ -119,7 +119,7 @@ def query(
     _json: bool,
     start: datetime,
     stop: datetime,
-    name: str = None,
+    name: Optional[str] = None,
 ):
     with open(path) as f:
         query = f.read()
@@ -156,7 +156,7 @@ def report(
     cache: bool,
     start: datetime,
     stop: datetime,
-    name: str = None,
+    name: Optional[str] = None,
 ):
     logger.info(f"Querying between {start} and {stop}")
     bid_window = f"aw-watcher-window_{hostname}"
@@ -242,7 +242,7 @@ def canonical(
     cache: bool,
     start: datetime,
     stop: datetime,
-    name: str = None,
+    name: Optional[str] = None,
 ):
     logger.info(f"Querying between {start} and {stop}")
     bid_window = f"aw-watcher-window_{hostname}"

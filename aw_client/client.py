@@ -161,8 +161,8 @@ class ActivityWatchClient:
         self,
         bucket_id: str,
         limit: int = -1,
-        start: datetime = None,
-        end: datetime = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> List[Event]:
         endpoint = f"buckets/{bucket_id}/events"
 
@@ -195,8 +195,8 @@ class ActivityWatchClient:
         self,
         bucket_id: str,
         limit: int = -1,
-        start: datetime = None,
-        end: datetime = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> int:
         endpoint = f"buckets/{bucket_id}/events/count"
 
@@ -308,7 +308,7 @@ class ActivityWatchClient:
         self,
         query: str,
         timeperiods: List[Tuple[datetime, datetime]],
-        name: str = None,
+        name: Optional[str] = None,
         cache: bool = False,
     ) -> List[Any]:
         endpoint = "query/"
