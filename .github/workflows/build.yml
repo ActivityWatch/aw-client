@@ -26,16 +26,11 @@ jobs:
       with:
         python-version: ${{ matrix.python_version }}
 
-    - name: Create virtualenv
-      shell: bash
-      run: |
-        pip install virtualenv
-        python -m virtualenv venv
-
     - name: Install dependencies
       shell: bash
       run: |
-        pip install poetry
+        pip install poetry==1.3.2
+        python -m venv venv
         source venv/bin/activate || source venv/Scripts/activate
         make build
 
