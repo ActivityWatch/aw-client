@@ -39,6 +39,9 @@ files = ["aw_client", "tests", "examples"]
 ignore_missing_imports = true
 check_untyped_defs = true
 
+[tool.ruff]
+ignore = ["E402", "E501"]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

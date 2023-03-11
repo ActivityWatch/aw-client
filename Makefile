@@ -20,8 +20,14 @@ typecheck:
 
 PYFILES=aw_client/*.py examples/*.py
 
+lint:
+	ruff check .
+
 lint-fix:
-	pyupgrade --py37-plus ${PYFILES}
+	pyupgrade --py38-plus ${PYFILES} --exit-zero-even-if-changed
+	ruff check --fix .
+
+format:
 	black .
 
 clean:
