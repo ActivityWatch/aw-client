@@ -3,7 +3,6 @@ import time
 from pprint import pprint
 from random import randint
 from datetime import datetime, timedelta, timezone
-import logging
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient

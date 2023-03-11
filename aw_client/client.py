@@ -478,18 +478,18 @@ class RequestQueue(threading.Thread):
                 # HTTP 400 - Bad request
                 # Example case: https://github.com/ActivityWatch/activitywatch/issues/815
                 # We don't want to retry, because a bad payload is likely to fail forever.
-                logger.error("Bad request, not retrying: {}".format(request.data))
+                logger.error(f"Bad request, not retrying: {request.data}")
             elif e.response and e.response.status_code == 500:
                 # HTTP 500 - Internal server error
                 # It is possible that the server is in a bad state (and will recover on restart),
                 # in which case we want to retry. I hope this can never caused by a bad payload.
-                logger.error("Internal server error, retrying: {}".format(request.data))
+                logger.error(f"Internal server error, retrying: {request.data}")
                 sleep(0.5)
                 return
             else:
-                logger.exception("Unknown error, not retrying: {}".format(request.data))
+                logger.exception(f"Unknown error, not retrying: {request.data}")
         except Exception:
-            logger.exception("Unknown error, not retrying: {}".format(request.data))
+            logger.exception(f"Unknown error, not retrying: {request.data}")
 
         # Mark the request as done
         self._task_done()

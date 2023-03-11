@@ -159,7 +159,7 @@ def browserEvents(params: DesktopQueryParams) -> str:
     """Returns a list of active browser events (where the browser was the active window) from all browser buckets"""
     code = "browser_events = [];"
 
-    for (browserName, bucketId) in browsersWithBuckets(params.bid_browsers):
+    for browserName, bucketId in browsersWithBuckets(params.bid_browsers):
         browser_appnames_str = json.dumps(browser_appnames[browserName])
         code += f"""
           events_{browserName} = flood(query_bucket("{bucketId}"));
