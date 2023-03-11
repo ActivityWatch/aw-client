@@ -31,8 +31,8 @@ mypy = "*"
 pylint = "*"
 types-requests = "*"
 types-tabulate = "*"
-pyupgrade = "^2.32.1"
-black = "^22.3.0"
+pyupgrade = "*"
+black = "*"
 
 [tool.mypy]
 files = ["aw_client", "tests", "examples"]
