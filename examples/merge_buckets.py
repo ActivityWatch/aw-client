@@ -17,7 +17,11 @@ def main():
     aw = aw_client.ActivityWatchClient(testing=True)
 
     buckets = aw.get_buckets()
-    print(f"Buckets: {buckets.keys()}")
+    print("Available bucket IDs:")
+    print()
+    for id in buckets.keys():
+        print(id)
+    print()
 
     src_id = input("Source bucket ID: ")
     dest_id = input("Destination bucket ID: ")
