@@ -53,7 +53,7 @@ def main():
 
     print("Operation complete")
     if input("Do you want to delete the source bucket? (y/n): ") == "y":
-        aw.delete_bucket(src_id)
+        aw.delete_bucket(src_id, force=True)
         print("Bucket deleted")
 
     print("Exiting")
