@@ -1,1 +1,3 @@
-from .client import ActivityWatchClient  # noqa
+from .client import ActivityWatchClient
+
+__all__ = ("ActivityWatchClient",)
