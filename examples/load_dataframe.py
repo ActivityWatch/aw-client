@@ -1,14 +1,13 @@
 """
 Load ActivityWatch data into a dataframe, and export as CSV.
 """
-
 from datetime import datetime, timedelta, timezone
 
+import iso8601
 import pandas as pd
-
 from aw_client import ActivityWatchClient
-from aw_client.queries import canonicalEvents, DesktopQueryParams
 from aw_client.classes import default_classes
+from aw_client.queries import DesktopQueryParams, canonicalEvents
 
 
 def build_query() -> str:
@@ -47,7 +46,7 @@ def main() -> None:
         e["$category"] = " > ".join(e["$category"])
 
     df = pd.json_normalize(events)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], infer_datetime_format=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"].apply(iso8601.parse_date))
     df.set_index("timestamp", inplace=True)
 
     print(df)
