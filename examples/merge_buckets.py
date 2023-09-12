@@ -17,7 +17,11 @@ def main():
     aw = aw_client.ActivityWatchClient(testing=True)
 
     buckets = aw.get_buckets()
-    print(f"Buckets: {buckets.keys()}")
+    print("Available bucket IDs:")
+    print()
+    for id in buckets.keys():
+        print(id)
+    print()
 
     src_id = input("Source bucket ID: ")
     dest_id = input("Destination bucket ID: ")
@@ -53,7 +57,7 @@ def main():
 
     print("Operation complete")
     if input("Do you want to delete the source bucket? (y/n): ") == "y":
-        aw.delete_bucket(src_id)
+        aw.delete_bucket(src_id, force=True)
         print("Bucket deleted")
 
     print("Exiting")
