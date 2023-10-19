@@ -340,6 +340,20 @@ class ActivityWatchClient:
         return response.json()
 
     #
+    # Settings
+    #
+
+    def get_setting(self, key=None) -> dict:
+        # TODO: explicitly fetch key from server, instead of fetching all settings
+        settings = self._get("settings").json()
+        if key:
+            return settings.get(key, None)
+        return settings
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._post(f"settings/{key}", value)
+
+    #
     #   Connect and disconnect
     #
 
