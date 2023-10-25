@@ -21,6 +21,7 @@ import persistqueue
 import requests as req
 from aw_core.dirs import get_data_dir
 from aw_core.models import Event
+from aw_transform.heartbeats import heartbeat_merge
 
 from .config import load_config
 from .singleinstance import SingleInstance
@@ -31,10 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def _log_request_exception(e: req.RequestException):
-    r = e.response
     logger.warning(str(e))
     try:
-        d = r.json()
+        d = e.response.json() if e.response else None
         logger.warning(f"Error message received: {d}")
     except json.JSONDecodeError:
         pass
@@ -152,7 +152,7 @@ class ActivityWatchClient:
             event = self._get(endpoint).json()
             return Event(**event)
         except req.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response and e.response.status_code == 404:
                 return None
             else:
                 raise
@@ -229,8 +229,6 @@ class ActivityWatchClient:
               This makes the request itself non-blocking and therefore
               the function will in that case always returns None.
         """
-
-        from aw_transform.heartbeats import heartbeat_merge
 
         endpoint = f"buckets/{bucket_id}/heartbeat?pulsetime={pulsetime}"
         _commit_interval = commit_interval or self.commit_interval
