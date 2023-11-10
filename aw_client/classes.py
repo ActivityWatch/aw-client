@@ -44,7 +44,7 @@ default_classes: List[Tuple[CategoryId, CategorySpec]] = [
         ["Comms", "IM"],
         {
             "type": "regex",
-            "regex": "Messenger|Telegram|Signal|WhatsApp|Rambox|Slack|Riot|Discord|Nheko",
+            "regex": "Messenger|Telegram|Signal|WhatsApp|Rambox|Slack|Riot|Element|Discord|Nheko|NeoChat",
         },
     ),
     (
