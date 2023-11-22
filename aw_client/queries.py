@@ -3,17 +3,23 @@ Common queries.
 
 Most of these are from: https://github.com/ActivityWatch/aw-webui/blob/master/src/queries.ts
 """
-
+import dataclasses
 import json
 import re
-import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import (
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
-from typing import List, Union, Tuple, Optional
 from typing_extensions import TypeGuard
 
 import aw_client
+
+from .classes import get_classes
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -75,6 +81,11 @@ def isAndroidParams(params: QueryParams) -> TypeGuard[AndroidQueryParams]:
 
 
 def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> str:
+    if not params.classes:
+        # if categories not explicitly set,
+        # get categories from server settings
+        params.classes = get_classes()
+
     # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
     classes_str = json.dumps(params.classes, cls=EnhancedJSONEncoder)
     classes_str = re.sub(r"\\\\", r"\\", classes_str)

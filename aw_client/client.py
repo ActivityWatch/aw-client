@@ -341,12 +341,11 @@ class ActivityWatchClient:
     # Settings
     #
 
-    def get_setting(self, key=None) -> dict:
-        # TODO: explicitly fetch key from server, instead of fetching all settings
-        settings = self._get("settings").json()
+    def get_setting(self, key: Optional[str] = None) -> dict:
         if key:
-            return settings.get(key, None)
-        return settings
+            return self._get(f"settings/{key}").json()
+        else:
+            return self._get("settings").json()
 
     def set_setting(self, key: str, value: str) -> None:
         self._post(f"settings/{key}", value)

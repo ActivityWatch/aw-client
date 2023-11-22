@@ -3,8 +3,18 @@ Default classes
 
 Taken from default classes in aw-webui
 """
+import logging
+import random
+from typing import (
+    Any,
+    Dict,
+    List,
+    Tuple,
+)
 
-from typing import List, Dict, Any, Tuple
+import aw_client
+
+logger = logging.getLogger(__name__)
 
 CategoryId = List[str]
 CategorySpec = Dict[str, Any]
@@ -52,3 +62,20 @@ default_classes: List[Tuple[CategoryId, CategorySpec]] = [
         {"type": "regex", "regex": "Gmail|Thunderbird|mutt|alpine"},
     ),
 ]
+
+
+def get_classes() -> List[Tuple[List[str], dict]]:
+    """
+    Get classes from server-side settings.
+    Might throw a 404 if not set yet, in which case we use the default classes as a fallback.
+    """
+    awc = aw_client.ActivityWatchClient(f"get-setting-{random.randint(0, 10000)}")
+    try:
+        classes = awc.get_setting("classes")
+    except Exception:
+        logger.warning(
+            "Failed to get classes from server, using default classes as fallback"
+        )
+        return default_classes
+    # map into list of tuples
+    return [(v["name"], v["rule"]) for v in classes]
