@@ -21,6 +21,8 @@ jobs:
       with:
         submodules: 'recursive'
 
+    - run: pipx install poetry
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -36,7 +38,6 @@ jobs:
     - name: Install dependencies
       shell: bash
       run: |
-        pipx install poetry
         source venv/bin/activate || source venv/Scripts/activate
         make build
 
