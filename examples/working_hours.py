@@ -5,9 +5,11 @@ Also saves the matching work-events to a JSON file (for auditing purposes).
 """
 
 import json
+import logging
 import os
 import re
 import socket
+import sys
 from datetime import datetime, time, timedelta
 from typing import Dict, List, Tuple
 
@@ -49,17 +51,10 @@ def generous_approx(events: List[dict], max_break: float) -> timedelta:
     )
 
 
-def query(regex: str, timeperiods=None, hostname: str = "", save=True):
+def query(regex: str, timeperiods, hostname: str):
     print("Querying events...")
     print(f"  Day offset: {day_offset}")
     print("")
-
-    now = datetime.now().astimezone()
-    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
-
-    if timeperiods is None:
-        timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
-        timeperiods.reverse()
 
     categories: List[Tuple[List[str], Dict]] = [
         (
@@ -90,18 +85,38 @@ def query(regex: str, timeperiods=None, hostname: str = "", save=True):
 
     res = aw.query(query, timeperiods)
 
-    for break_time in [0, 5 * 60, 15 * 60]:
-        _print(
-            timeperiods, res, break_time, {"category_rule": categories[0][1]["regex"]}
-        )
-
-    if save:
-        fn = "working_hours_events.json"
-        with open(fn, "w") as f:
-            print(f"Saving to {fn}...")
-            json.dump(res, f, indent=2)
-
     return res
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python3 working_hours.py <regex> [hostname]")
+        exit(1)
+
+    regex = sys.argv[1]
+    print(f"Using regex: {regex}")
+
+    if len(sys.argv) > 2:
+        hostname = sys.argv[2]
+        print(f"Using hostname: {hostname}")
+    else:
+        hostname = socket.gethostname()
+
+    now = datetime.now().astimezone()
+    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
+
+    timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
+    timeperiods.reverse()
+
+    res = query(regex, timeperiods, hostname)
+
+    for break_time in [0, 5 * 60, 15 * 60]:
+        _print(timeperiods, res, break_time, {"regex": regex})
+
+    fn = "working_hours_events.json"
+    with open(fn, "w") as f:
+        print(f"Saving to {fn}...")
+        json.dump(res, f, indent=2)
 
 
 def _print(timeperiods, res, break_time, params: dict):
@@ -137,24 +152,7 @@ def _print(timeperiods, res, break_time, params: dict):
 
 
 if __name__ == "__main__":
-    # Usage: python working_hours.py [regex] [hostname]
-    import sys
-
-    if len(sys.argv) > 1:
-        regex = sys.argv[1]
-    else:
-        regex = EXAMPLE_REGEX
-    print(f"Using regex: {regex}")
-
-    if len(sys.argv) > 2:
-        hostname = sys.argv[2]
-        print(f"Using hostname: {hostname}")
-    else:
-        hostname = socket.gethostname()
-
     # ignore log warnings in aw_transform
-    import logging
-
     logging.getLogger("aw_transform").setLevel(logging.ERROR)
 
-    query(regex, hostname)
+    main()
