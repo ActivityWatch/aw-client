@@ -19,7 +19,6 @@ from aw_core import Event
 from aw_transform import flood
 from tabulate import tabulate
 
-EXAMPLE_REGEX = r"activitywatch|algobit|defiarb|github.com"
 OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
 
 td1d = timedelta(days=1)

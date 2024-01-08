@@ -1,6 +1,7 @@
 """
 Load ActivityWatch data into a dataframe, and export as CSV.
 """
+import socket
 from datetime import datetime, timedelta, timezone
 
 import iso8601
@@ -11,10 +12,11 @@ from aw_client.queries import DesktopQueryParams, canonicalEvents
 
 
 def build_query() -> str:
+    hostname = socket.gethostname()
     canonicalQuery = canonicalEvents(
         DesktopQueryParams(
-            bid_window="aw-watcher-window_",
-            bid_afk="aw-watcher-afk_",
+            bid_window=f"aw-watcher-window_{hostname}",
+            bid_afk=f"aw-watcher-afk_{hostname}",
             classes=default_classes,
         )
     )
