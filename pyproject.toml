@@ -24,7 +24,7 @@ click = "^8.0"
 tabulate = "*"
 typing-extensions = "*"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest = "^7.0"
 pytest-cov = "*"
 mypy = "*"
@@ -33,6 +33,7 @@ types-requests = "*"
 types-tabulate = "*"
 pyupgrade = "*"
 black = "*"
+gspread = "^5.12.4"  # used in examples
 
 [tool.mypy]
 files = ["aw_client", "tests", "examples"]

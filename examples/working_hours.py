@@ -5,21 +5,24 @@ Also saves the matching work-events to a JSON file (for auditing purposes).
 """
 
 import json
-import re
+import logging
 import os
-from datetime import datetime, timedelta, time
-from typing import List, Tuple, Dict
-
-from tabulate import tabulate
+import re
+import socket
+import sys
+from datetime import datetime, time, timedelta
+from typing import Dict, List, Tuple
 
 import aw_client
 from aw_client import queries
 from aw_core import Event
 from aw_transform import flood
+from tabulate import tabulate
 
-
-EXAMPLE_REGEX = r"activitywatch|algobit|defiarb|github.com"
 OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
+
+td1d = timedelta(days=1)
+day_offset = timedelta(hours=4)
 
 
 def _pretty_timedelta(td: timedelta) -> str:
@@ -47,18 +50,10 @@ def generous_approx(events: List[dict], max_break: float) -> timedelta:
     )
 
 
-def query(regex: str = EXAMPLE_REGEX, save=True):
+def query(regex: str, timeperiods, hostname: str):
     print("Querying events...")
-    td1d = timedelta(days=1)
-    day_offset = timedelta(hours=4)
     print(f"  Day offset: {day_offset}")
     print("")
-
-    now = datetime.now().astimezone()
-    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
-
-    timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
-    timeperiods.reverse()
 
     categories: List[Tuple[List[str], Dict]] = [
         (
@@ -75,8 +70,8 @@ def query(regex: str = EXAMPLE_REGEX, save=True):
 
     canonicalQuery = queries.canonicalEvents(
         queries.DesktopQueryParams(
-            bid_window="aw-watcher-window_",
-            bid_afk="aw-watcher-afk_",
+            bid_window=f"aw-watcher-window_{hostname}",
+            bid_afk=f"aw-watcher-afk_{hostname}",
             classes=categories,
             filter_classes=[["Work"]],
         )
@@ -89,16 +84,38 @@ def query(regex: str = EXAMPLE_REGEX, save=True):
 
     res = aw.query(query, timeperiods)
 
-    for break_time in [0, 5 * 60, 10 * 60, 15 * 60]:
-        _print(
-            timeperiods, res, break_time, {"category_rule": categories[0][1]["regex"]}
-        )
+    return res
 
-    if save:
-        fn = "working_hours_events.json"
-        with open(fn, "w") as f:
-            print(f"Saving to {fn}...")
-            json.dump(res, f, indent=2)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python3 working_hours.py <regex> [hostname]")
+        exit(1)
+
+    regex = sys.argv[1]
+    print(f"Using regex: {regex}")
+
+    if len(sys.argv) > 2:
+        hostname = sys.argv[2]
+        print(f"Using hostname: {hostname}")
+    else:
+        hostname = socket.gethostname()
+
+    now = datetime.now().astimezone()
+    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
+
+    timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
+    timeperiods.reverse()
+
+    res = query(regex, timeperiods, hostname)
+
+    for break_time in [0, 5 * 60, 15 * 60]:
+        _print(timeperiods, res, break_time, {"regex": regex})
+
+    fn = "working_hours_events.json"
+    with open(fn, "w") as f:
+        print(f"Saving to {fn}...")
+        json.dump(res, f, indent=2)
 
 
 def _print(timeperiods, res, break_time, params: dict):
@@ -134,4 +151,7 @@ def _print(timeperiods, res, break_time, params: dict):
 
 
 if __name__ == "__main__":
-    query()
+    # ignore log warnings in aw_transform
+    logging.getLogger("aw_transform").setLevel(logging.ERROR)
+
+    main()
