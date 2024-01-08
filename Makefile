@@ -13,7 +13,7 @@ test-integration:
 test-examples:
 	cd examples; pytest -v *.py
 	cd examples; yes | python3 load_dataframe.py
-	cd examples; python3 working_hours.py 'activitywatch|aw-|github.com'
+	cd examples; python3 working_hours.py 'activitywatch|aw-|github.com' fakedata
 
 typecheck:
 	poetry run mypy
