@@ -17,6 +17,7 @@ events is less than `break_time` (10 minutes by default), it is considered as wo
 Usage:
     python3 working_hours_gspread.py <sheet_key> <regex>
 """
+
 import socket
 import sys
 from datetime import datetime, time, timedelta
@@ -92,6 +93,10 @@ def update_sheet(sheet_key: str, regex: str):
 
     # Iterate over the result and update or append the data to the Google Sheet
     for tp, r in zip(timeperiods, res):
+        # skip if the timeperiod is in the future (might happen between midnight and the day_offset)
+        if tp[0] > now:
+            continue
+
         date = tp[0].date()
         duration = (
             working_hours.generous_approx(r["events"], break_time).total_seconds()
