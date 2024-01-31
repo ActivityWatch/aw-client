@@ -3,16 +3,19 @@ Lists the most common words among uncategorized events, by duration, to help in 
 
 This might make more sense as a notebook.
 """
-
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from tabulate import tabulate
-from typing import Dict, List, Tuple, Any
+from typing import (
+    Any,
+    Dict,
+    List,
+    Tuple,
+)
 
-from aw_core import Event
 import aw_client
 from aw_client import queries
-
+from aw_core import Event
+from tabulate import tabulate
 
 # set up client
 awc = aw_client.ActivityWatchClient("test")
@@ -38,11 +41,12 @@ def get_events(categories=List[Tuple[Tuple[str], Dict[str, Any]]]):
     timeperiods = [(start, now)]
 
     canonicalQuery = queries.canonicalEvents(
+        awc,
         queries.DesktopQueryParams(
             bid_window="aw-watcher-window_",
             bid_afk="aw-watcher-afk_",
             classes=categories,
-        )
+        ),
     )
     res = awc.query(
         f"""

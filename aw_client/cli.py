@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-import json
 import argparse
+import json
 import logging
 import textwrap
-from typing import Optional, List
-from datetime import timedelta, datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
 import click
+from aw_core import Event
 from tabulate import tabulate
 
-from aw_core import Event
-
 import aw_client
-from . import queries
-from .classes import default_classes
 
+from . import queries
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -161,6 +159,7 @@ def report(
     logger.info(f"Querying between {start} and {stop}")
     bid_window = f"aw-watcher-window_{hostname}"
     bid_afk = f"aw-watcher-afk_{hostname}"
+    awc = obj.client
 
     if not start.tzinfo:
         start = start.astimezone()
@@ -169,23 +168,18 @@ def report(
 
     bid_browsers: List[str] = []
 
-    # TODO: Allow loading from toml
-    logger.info("Using default classes")
-    classes = default_classes
-
     params = queries.DesktopQueryParams(
         bid_browsers=bid_browsers,
-        classes=classes,
         filter_classes=[],
         filter_afk=True,
         include_audible=True,
         bid_window=bid_window,
         bid_afk=bid_afk,
     )
-    query = queries.fullDesktopQuery(params)
+    query = queries.fullDesktopQuery(awc, params)
     logger.debug("Query: \n" + queries.pretty_query(query))
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = awc.query(query, [(start, stop)], cache=cache, name=name)
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
@@ -247,20 +241,19 @@ def canonical(
     logger.info(f"Querying between {start} and {stop}")
     bid_window = f"aw-watcher-window_{hostname}"
     bid_afk = f"aw-watcher-afk_{hostname}"
+    awc = obj.client
 
     if not start.tzinfo:
         start = start.astimezone()
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    classes = default_classes
-
     query = queries.canonicalEvents(
+        awc,
         queries.DesktopQueryParams(
             bid_window=bid_window,
             bid_afk=bid_afk,
-            classes=classes,
-        )
+        ),
     )
     query = f"""{query}\n RETURN = events;"""
     logger.debug("Query: \n" + queries.pretty_query(query))

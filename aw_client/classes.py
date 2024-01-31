@@ -4,15 +4,12 @@ Default classes
 Taken from default classes in aw-webui
 """
 import logging
-import random
 from typing import (
     Any,
     Dict,
     List,
     Tuple,
 )
-
-import aw_client
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +61,11 @@ default_classes: List[Tuple[CategoryId, CategorySpec]] = [
 ]
 
 
-def get_classes() -> List[Tuple[List[str], dict]]:
+def get_classes(awc) -> List[Tuple[List[str], dict]]:
     """
     Get classes from server-side settings.
     Might throw a 404 if not set yet, in which case we use the default classes as a fallback.
     """
-    # NOTE: Always tries to fetch from prod server,
-    #       which is potentially wrong if testing server is being used.
-    awc = aw_client.ActivityWatchClient(f"get-setting-{random.randint(0, 10000)}")
     try:
         classes = awc.get_setting("classes")
     except Exception:
