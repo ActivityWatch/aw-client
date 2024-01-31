@@ -3,7 +3,6 @@ Script that computes how many hours was spent in a regex-specified "work" catego
 
 Also saves the matching work-events to a JSON file (for auditing purposes).
 """
-
 import json
 import logging
 import os
@@ -69,12 +68,13 @@ def query(regex: str, timeperiods, hostname: str):
     aw = aw_client.ActivityWatchClient()
 
     canonicalQuery = queries.canonicalEvents(
+        aw,
         queries.DesktopQueryParams(
             bid_window=f"aw-watcher-window_{hostname}",
             bid_afk=f"aw-watcher-afk_{hostname}",
             classes=categories,
             filter_classes=[["Work"]],
-        )
+        ),
     )
     query = f"""
     {canonicalQuery}

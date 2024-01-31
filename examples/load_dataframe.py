@@ -12,14 +12,15 @@ from aw_client.classes import default_classes
 from aw_client.queries import DesktopQueryParams, canonicalEvents
 
 
-def build_query() -> str:
+def build_query(awc) -> str:
     hostname = "fakedata" if os.getenv("CI") else socket.gethostname()
     canonicalQuery = canonicalEvents(
+        awc,
         DesktopQueryParams(
             bid_window=f"aw-watcher-window_{hostname}",
             bid_afk=f"aw-watcher-afk_{hostname}",
             classes=default_classes,
-        )
+        ),
     )
     return f"""
     {canonicalQuery}
@@ -31,10 +32,10 @@ def main() -> None:
     now = datetime.now(tz=timezone.utc)
     td30d = timedelta(days=30)
 
-    aw = ActivityWatchClient()
+    awc = ActivityWatchClient()
     print("Querying...")
-    query = build_query()
-    data = aw.query(query, [(now - td30d, now)])
+    query = build_query(awc)
+    data = awc.query(query, [(now - td30d, now)])
 
     events = [
         {

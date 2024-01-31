@@ -80,11 +80,14 @@ def isAndroidParams(params: QueryParams) -> TypeGuard[AndroidQueryParams]:
     return isinstance(params, AndroidQueryParams)
 
 
-def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> str:
+def canonicalEvents(
+    awc: aw_client.ActivityWatchClient,
+    params: Union[DesktopQueryParams, AndroidQueryParams],
+) -> str:
     if not params.classes:
         # if categories not explicitly set,
         # get categories from server settings
-        params.classes = get_classes()
+        params.classes = get_classes(awc)
 
     # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
     classes_str = json.dumps(params.classes, cls=EnhancedJSONEncoder)
@@ -233,6 +236,7 @@ def escape_doublequote(s: str) -> str:
 
 
 def fullDesktopQuery(
+    awc: aw_client.ActivityWatchClient,
     params: DesktopQueryParams,
 ) -> str:
     # Escape `"`
@@ -242,7 +246,7 @@ def fullDesktopQuery(
 
     return (
         f"""
-      {canonicalEvents(params)}
+      {canonicalEvents(awc, params)}
       title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title"]));
       app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
       cat_events   = sort_by_duration(merge_events_by_keys(events, ["$category"]));
@@ -281,6 +285,7 @@ def fullDesktopQuery(
 
 
 def test_fullDesktopQuery():
+    awc = aw_client.ActivityWatchClient("test")
     params = DesktopQueryParams(
         bid_window="aw-watcher-window_",
         bid_afk="aw-watcher-afk_",
@@ -289,9 +294,8 @@ def test_fullDesktopQuery():
     start = now - timedelta(days=7)
     end = now
     timeperiods = [(start, end)]
-    query = fullDesktopQuery(params)
+    query = fullDesktopQuery(awc, params)
 
-    awc = aw_client.ActivityWatchClient("test")
     res = awc.query(query, timeperiods)[0]
     events = res["events"]
     print(len(events))
