@@ -137,7 +137,7 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
             # Categorize
             f"events = categorize(events, {classes_str});" if params.classes else "",
             # Filter out selected categories
-            f"events = filter_keyvals(events, '$category', {cat_filter_str});"
+            f'events = filter_keyvals(events, "$category", {cat_filter_str});'
             if params.filter_classes
             else "",
         ]
