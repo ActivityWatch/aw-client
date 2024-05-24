@@ -133,6 +133,13 @@ class ActivityWatchClient:
         headers = {"Content-type": "application/json"}
         return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
 
+    def _rfc3339_date_string(self, date: datetime) -> str:
+        """Returns a rfc3339 date string"""
+        tz = date.astimezone().tzinfo
+        date_tz = date.replace(tzinfo=tz)
+        rfc3339_date = date_tz.isoformat().replace("+00:00", "Z")
+        return rfc3339_date
+
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
         endpoint = "info"
@@ -170,9 +177,9 @@ class ActivityWatchClient:
         if limit is not None:
             params["limit"] = str(limit)
         if start is not None:
-            params["start"] = start.isoformat()
+            params["start"] = self._rfc3339_date_string(start)
         if end is not None:
-            params["end"] = end.isoformat()
+            params["end"] = self._rfc3339_date_string(end)
 
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
