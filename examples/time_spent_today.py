@@ -1,15 +1,12 @@
-# NOTE: Might not treat timezones correctly.
-
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 import socket
 
 import aw_client
 
 if __name__ == "__main__":
-    # Set this to your AFK bucket
     bucket_id = f"aw-watcher-afk_{socket.gethostname()}"
 
-    daystart = datetime.combine(datetime.now().date(), time())
+    daystart = datetime.combine(datetime.now().date(), time()).astimezone(timezone.utc)
     dayend = daystart + timedelta(days=1)
 
     awc = aw_client.ActivityWatchClient("testclient")
