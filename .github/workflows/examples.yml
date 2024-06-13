@@ -15,17 +15,19 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python_version: [3.9]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         submodules: 'recursive'
 
+    - run: pipx install poetry
+
     - name: Set up Python
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python_version }}
+        python-version-file: pyproject.toml
+        cache: 'poetry'
 
     - name: Create virtualenv
       shell: bash
@@ -36,10 +38,9 @@ jobs:
     - name: Install dependencies
       shell: bash
       run: |
-        pip install poetry
         source venv/bin/activate || source venv/Scripts/activate
         make build
-  
+
     - name: Set up ActivityWatch
       uses: ActivityWatch/setup-action@master
       with:
