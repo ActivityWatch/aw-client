@@ -88,9 +88,10 @@ class ActivityWatchClient:
 
         server_host = host or server_config["hostname"]
         server_port = port or server_config["port"]
-        self.server_address = "{protocol}://{host}:{port}".format(
+        default_server_address = "{protocol}://{host}:{port}".format(
             protocol=protocol, host=server_host, port=server_port
         )
+        self.server_address = server_config.get("endpoint") or default_server_address
 
         self.instance = SingleInstance(
             f"{self.client_name}-at-{server_host}-on-{server_port}"
