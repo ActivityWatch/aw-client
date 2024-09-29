@@ -27,11 +27,11 @@ typing-extensions = "*"
 [tool.poetry.group.dev.dependencies]
 mypy = "*"
 ruff = "*"
-pytest = "^7.0"
+pytest = "*"
 pytest-cov = "*"
 types-requests = "*"
 types-tabulate = "*"
-gspread = "^5.12.4"  # used in examples
+gspread = "*"  # used in examples
 
 [tool.mypy]
 files = ["aw_client", "tests", "examples"]
