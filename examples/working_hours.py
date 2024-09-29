@@ -67,7 +67,7 @@ def query(regex: str, timeperiods, hostname: str):
         )
     ]
 
-    aw = aw_client.ActivityWatchClient()
+    aw = aw_client.ActivityWatchClient(client_name="working_hours")
 
     canonicalQuery = queries.canonicalEvents(
         queries.DesktopQueryParams(

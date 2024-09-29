@@ -25,14 +25,12 @@ tabulate = "*"
 typing-extensions = "*"
 
 [tool.poetry.group.dev.dependencies]
+mypy = "*"
+ruff = "*"
 pytest = "^7.0"
 pytest-cov = "*"
-mypy = "*"
-pylint = "*"
 types-requests = "*"
 types-tabulate = "*"
-pyupgrade = "*"
-black = "*"
 gspread = "^5.12.4"  # used in examples
 
 [tool.mypy]
@@ -41,7 +39,11 @@ ignore_missing_imports = true
 check_untyped_defs = true
 
 [tool.ruff]
-ignore = ["E402", "E501"]
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "UP"]
+ignore = ["E402", "E501", "B905"]
 
 [build-system]
 requires = ["poetry-core"]

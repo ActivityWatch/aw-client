@@ -88,9 +88,7 @@ class ActivityWatchClient:
 
         server_host = host or server_config["hostname"]
         server_port = port or server_config["port"]
-        self.server_address = "{protocol}://{host}:{port}".format(
-            protocol=protocol, host=server_host, port=server_port
-        )
+        self.server_address = f"{protocol}://{server_host}:{server_port}"
 
         self.instance = SingleInstance(
             f"{self.client_name}-at-{server_host}-on-{server_port}"
@@ -445,9 +443,7 @@ class RequestQueue(threading.Thread):
             self._create_buckets()
             self.connected = True
             logger.info(
-                "Connection to aw-server established by {}".format(
-                    self.client.client_name
-                )
+                f"Connection to aw-server established by {self.client.client_name}"
             )
         except req.RequestException:
             self.connected = False
@@ -511,9 +507,7 @@ class RequestQueue(threading.Thread):
             # Connect
             while not self._try_connect():
                 logger.warning(
-                    "Not connected to server, {} requests in queue".format(
-                        self._persistqueue.qsize()
-                    )
+                    f"Not connected to server, {self._persistqueue.qsize()} requests in queue"
                 )
                 if self.wait(self._attempt_reconnect_interval):
                     break
