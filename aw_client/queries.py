@@ -116,9 +116,11 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
             else "",
             # Fetch browser events
             (
-                browserEvents(params)
-                if isDesktopParams(params)
-                else ""
+                (
+                    browserEvents(params)
+                    if isDesktopParams(params)
+                    else ""
+                )
                 + (  # Include focused and audible browser events as indications of not-afk
                     """
             audible_events = filter_keyvals(browser_events, "audible", [true]);
