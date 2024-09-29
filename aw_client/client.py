@@ -127,7 +127,9 @@ class ActivityWatchClient:
         )
 
     @always_raise_for_request_errors
-    def _delete(self, endpoint: str, data: Any = dict()) -> req.Response:
+    def _delete(self, endpoint: str, data: Any = None) -> req.Response:
+        if data is None:
+            data = {}
         headers = {"Content-type": "application/json"}
         return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
 
@@ -323,7 +325,7 @@ class ActivityWatchClient:
                 assert _dt_is_tzaware(start)
                 assert _dt_is_tzaware(stop)
             except AssertionError:
-                raise ValueError("start/stop needs to have a timezone set")
+                raise ValueError("start/stop needs to have a timezone set") from None
 
         data = {
             "timeperiods": [

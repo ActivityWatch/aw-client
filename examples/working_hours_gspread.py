@@ -21,8 +21,10 @@ Usage:
 import socket
 import sys
 from datetime import datetime, time, timedelta
+from typing import Union
 
 import gspread
+from gspread.utils import ValueInputOption
 
 import working_hours
 
@@ -102,7 +104,7 @@ def update_sheet(sheet_key: str, regex: str):
             working_hours.generous_approx(r["events"], break_time).total_seconds()
             / 3600
         )
-        row = [str(date), duration]
+        row: list[Union[str, float]] = [str(date), duration]
 
         # If the date is the same as the last entry, update it
         if last_date and date == last_date:
@@ -111,7 +113,7 @@ def update_sheet(sheet_key: str, regex: str):
         # If the date is later than the last entry, append it
         elif not last_date or date > last_date:
             print(f"Appending {row}")
-            worksheet.append_row(row, value_input_option="USER_ENTERED")
+            worksheet.append_row(row, value_input_option=ValueInputOption.user_entered)
         else:
             print(f"Skipping {row}")
 

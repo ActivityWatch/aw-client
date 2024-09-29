@@ -1,35 +1,24 @@
 #!/usr/bin/env python3
 import json
-import argparse
 import logging
 import textwrap
-from typing import Optional, List
-from datetime import timedelta, datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
 import click
+from aw_core import Event
 from tabulate import tabulate
 
-from aw_core import Event
-
 import aw_client
+
 from . import queries
 from .classes import default_classes
-
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
 td1yr = timedelta(days=365)
 
 logger = logging.getLogger(__name__)
-
-
-def _valid_date(s):
-    # https://stackoverflow.com/questions/25470844/specify-format-for-input-arguments-argparse-python
-    try:
-        return datetime.strptime(s, "%Y-%m-%d")
-    except ValueError:
-        msg = f"Not a valid date: '{s}'."
-        raise argparse.ArgumentTypeError(msg)
 
 
 class _Context:

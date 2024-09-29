@@ -10,11 +10,17 @@ Issues/improvements:
 
 import re
 import sys
-from typing import List, Set, Pattern, Union, cast
 from copy import deepcopy
+from typing import (
+    List,
+    Pattern,
+    Set,
+    Union,
+    cast,
+)
 
-from aw_core import Event
 from aw_client import ActivityWatchClient
+from aw_core import Event
 
 aw: ActivityWatchClient
 
@@ -104,7 +110,7 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
 
 
 def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
-    for k, v in e.data.items():
+    for v in e.data.values():
         if isinstance(v, str):
             if isinstance(pattern, str):
                 if pattern in v.lower():
