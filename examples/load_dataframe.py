@@ -1,6 +1,7 @@
 """
 Load ActivityWatch data into a dataframe, and export as CSV.
 """
+
 import os
 import socket
 from datetime import datetime, timedelta, timezone

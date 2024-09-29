@@ -3,6 +3,7 @@ Common queries.
 
 Most of these are from: https://github.com/ActivityWatch/aw-webui/blob/master/src/queries.ts
 """
+
 import dataclasses
 import json
 import re
@@ -104,23 +105,23 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
             # Fetch window/app events
             f'events = flood(query_bucket(find_bucket("{bid_window}")));',
             # On Android, merge events to avoid overload of events
-            'events = merge_events_by_keys(events, ["app"]);'
-            if isAndroidParams(params)
-            else "",
+            (
+                'events = merge_events_by_keys(events, ["app"]);'
+                if isAndroidParams(params)
+                else ""
+            ),
             # Fetch not-afk events
-            f"""
+            (
+                f"""
             not_afk = flood(query_bucket(find_bucket("{params.bid_afk}")));
             not_afk = filter_keyvals(not_afk, "status", ["not-afk"]);
             """
-            if isDesktopParams(params)
-            else "",
+                if isDesktopParams(params)
+                else ""
+            ),
             # Fetch browser events
             (
-                (
-                    browserEvents(params)
-                    if isDesktopParams(params)
-                    else ""
-                )
+                (browserEvents(params) if isDesktopParams(params) else "")
                 + (  # Include focused and audible browser events as indications of not-afk
                     """
             audible_events = filter_keyvals(browser_events, "audible", [true]);
@@ -133,15 +134,19 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
                 else ""
             ),
             # Filter out window events when the user was afk
-            "events = filter_period_intersect(events, not_afk);"
-            if isDesktopParams(params) and params.filter_afk
-            else "",
+            (
+                "events = filter_period_intersect(events, not_afk);"
+                if isDesktopParams(params) and params.filter_afk
+                else ""
+            ),
             # Categorize
             f"events = categorize(events, {classes_str});" if params.classes else "",
             # Filter out selected categories
-            f'events = filter_keyvals(events, "$category", {cat_filter_str});'
-            if params.filter_classes
-            else "",
+            (
+                f'events = filter_keyvals(events, "$category", {cat_filter_str});'
+                if params.filter_classes
+                else ""
+            ),
         ]
     )
 

@@ -19,6 +19,7 @@ from aw_core import Event
 from aw_transform import flood
 from tabulate import tabulate
 
+
 OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
 
 td1d = timedelta(days=1)

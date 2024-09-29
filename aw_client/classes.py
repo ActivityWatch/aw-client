@@ -3,6 +3,7 @@ Default classes
 
 Taken from default classes in aw-webui
 """
+
 import logging
 import random
 from typing import (
