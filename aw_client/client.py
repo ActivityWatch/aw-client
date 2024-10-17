@@ -372,6 +372,20 @@ class ActivityWatchClient:
         # Throw away old thread object, create new one since same thread cannot be started twice
         self.request_queue = RequestQueue(self)
 
+    def wait_for_start(self, timeout: int = 10) -> None:
+        """Wait for the server to start by trying to get the server info."""
+        start_time = datetime.now()
+        sleep_time = 0.1
+        while (datetime.now() - start_time).seconds < timeout:
+            try:
+                self.get_info()
+                break
+            except req.exceptions.ConnectionError:
+                sleep(sleep_time)
+                sleep_time *= 2
+        else:
+            raise Exception("Server did not start in time")
+
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
