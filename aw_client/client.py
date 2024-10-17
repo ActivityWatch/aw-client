@@ -384,7 +384,7 @@ class ActivityWatchClient:
                 sleep(sleep_time)
                 sleep_time *= 2
         else:
-            raise Exception("Server did not start in time")
+            raise Exception(f"Server at {self.server_address} did not start in time")
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
