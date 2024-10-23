@@ -218,6 +218,7 @@ browser_appnames = {
         "Firefox-esr",
         "Firefox Beta",
         "Nightly",
+        "org.mozilla.firefox",
     ],
     "opera": ["opera.exe", "Opera"],
     "brave": ["brave.exe"],
