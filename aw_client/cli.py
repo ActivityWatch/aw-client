@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import json
 import logging
 import textwrap
@@ -138,6 +139,7 @@ def query(
 @click.option("--cache", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
+@click.option("--limit", default=10)
 @click.pass_obj
 def report(
     obj: _Context,
@@ -146,6 +148,7 @@ def report(
     start: datetime,
     stop: datetime,
     name: Optional[str] = None,
+    limit: int = 10,
 ):
     logger.info(f"Querying between {start} and {stop}")
     bid_window = f"aw-watcher-window_{hostname}"
@@ -182,11 +185,12 @@ def report(
         print_top(
             cat_events,
             lambda e: " > ".join(e.data["$category"]),
-            title="Top categories",
+            title="Categories",
+            n=limit,
         )
 
         title_events = _parse_events(period["window"]["title_events"])
-        print_top(title_events, lambda e: e.data["title"], title="Top titles")
+        print_top(title_events, lambda e: e.data["title"], title="Titles", n=limit)
 
         active_events = _parse_events(period["window"]["title_events"])
         print(
@@ -199,11 +203,8 @@ def _parse_events(events: List[dict]) -> List[Event]:
     return [Event(**event) for event in events]
 
 
-def print_top(events: List[Event], key=lambda e: e.data, title="Events"):
-    print(
-        title
-        + (f" (showing 10 out of {len(events)} events)" if len(events) > 10 else "")
-    )
+def print_top(events: List[Event], key=lambda e: e.data, title="Events", n=10):
+    print(f"Top {n} {title}" + (f" (out of {len(events)})" if len(events) > 10 else ""))
     print(
         tabulate(
             [
