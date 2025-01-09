@@ -12,7 +12,7 @@ from tabulate import tabulate
 import aw_client
 
 from . import queries
-from .classes import default_classes
+from .classes import default_classes, get_classes
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -158,10 +158,7 @@ def report(
 
     bid_browsers: List[str] = []
 
-    # TODO: Allow loading from toml
-    logger.info("Using default classes")
-    classes = default_classes
-
+    classes = get_classes()
     params = queries.DesktopQueryParams(
         bid_browsers=bid_browsers,
         classes=classes,
