@@ -248,44 +248,56 @@ def fullDesktopQuery(
     params.bid_afk = escape_doublequote(params.bid_afk)
     params.bid_browsers = [escape_doublequote(bucket) for bucket in params.bid_browsers]
 
-    return (
-        f"""
-      {canonicalEvents(params)}
-      title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title"]));
-      app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
-      cat_events   = sort_by_duration(merge_events_by_keys(events, ["$category"]));
-      app_events  = limit_events(app_events, {default_limit});
-      title_events  = limit_events(title_events, {default_limit});
-      duration = sum_durations(events);
-      """  # Browser events are retrieved in canonicalQuery
-        + f"""
-      browser_events = split_url_events(browser_events);
-      browser_urls = merge_events_by_keys(browser_events, ["url"]);
-      browser_urls = sort_by_duration(browser_urls);
-      browser_urls = limit_events(browser_urls, {default_limit});
-      browser_domains = merge_events_by_keys(browser_events, ["$domain"]);
-      browser_domains = sort_by_duration(browser_domains);
-      browser_domains = limit_events(browser_domains, {default_limit});
-      browser_duration = sum_durations(browser_events);
-      """
-        + """
-      RETURN = {
-          "events": events,
-          "window": {
-              "app_events": app_events,
-              "title_events": title_events,
-              "cat_events": cat_events,
-              "active_events": not_afk,
-              "duration": duration
-          },
-          "browser": {
-              "domains": browser_domains,
-              "urls": browser_urls,
-              "duration": browser_duration
-          }
-      };
-      """
-    )
+    # Build the base query
+    query = f"""
+    {canonicalEvents(params)}
+    title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title"]));
+    app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
+    cat_events   = sort_by_duration(merge_events_by_keys(events, ["$category"]));
+    app_events  = limit_events(app_events, {default_limit});
+    title_events  = limit_events(title_events, {default_limit});
+    duration = sum_durations(events);
+    """
+
+    # Add browser-related query parts if browser buckets exist
+    if params.bid_browsers:
+        query += """
+        browser_events = split_url_events(browser_events);
+        browser_urls = merge_events_by_keys(browser_events, ["url"]);
+        browser_urls = sort_by_duration(browser_urls);
+        browser_urls = limit_events(browser_urls, {default_limit});
+        browser_domains = merge_events_by_keys(browser_events, ["$domain"]);
+        browser_domains = sort_by_duration(browser_domains);
+        browser_domains = limit_events(browser_domains, {default_limit});
+        browser_duration = sum_durations(browser_events);
+        """
+    else:
+        query += """
+        browser_events = [];
+        browser_urls = [];
+        browser_domains = [];
+        browser_duration = 0;
+        """
+
+    # Add the return statement
+    query += """
+        RETURN = {
+            "events": events,
+            "window": {
+                "app_events": app_events,
+                "title_events": title_events,
+                "cat_events": cat_events,
+                "active_events": not_afk,
+                "duration": duration
+            },
+            "browser": {
+                "domains": browser_domains,
+                "urls": browser_urls,
+                "duration": browser_duration
+            }
+        };
+    """
+    return query
 
 
 def test_fullDesktopQuery():
