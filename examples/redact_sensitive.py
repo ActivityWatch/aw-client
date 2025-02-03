@@ -4,7 +4,6 @@ Be careful to not delete stuff you want to keep!
 
 Issues/improvements:
  - If an event matches the sensitive string, only the sensitive field will be redacted (so if the title matches but not the URL, the URL will remain unredacted)
- - One might not want to redact to the non-informative 'REDACTED', but instead to a string with secret meaning.
  - No preview of the events/strings to be redacted.
 """
 
@@ -24,7 +23,6 @@ from aw_core import Event
 
 aw: ActivityWatchClient
 
-REDACTED = "REDACTED"
 DRYRUN = True
 
 
@@ -59,6 +57,10 @@ def main():
             input("Enter a regex indicating sensitive content: ").lower()
         )
 
+    new_string = input("Enter the string used to replace sensitive content: ")
+    if not new_string:
+        new_string = "REDACTED"
+
     print("")
     if DRYRUN:
         print(
@@ -74,12 +76,12 @@ def main():
         for bucket_id in buckets.keys():
             if bucket_id.startswith("aw-watcher-afk"):
                 continue
-            _redact_bucket(bucket_id, pattern)
+            _redact_bucket(bucket_id, pattern, new_string)
     else:
-        _redact_bucket(bid_to_redact, pattern)
+        _redact_bucket(bid_to_redact, pattern, new_string)
 
 
-def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
+def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern], replace: str):
     print(f"\nChecking bucket: {bucket_id}")
 
     global aw
@@ -91,13 +93,13 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
         return
 
     yes_redact = input(
-        f"Do you want to replace all the matching strings with '{REDACTED}'? (y/N): "
+        f"Do you want to replace all the matching strings with '{replace}'? (y/N): "
     )
     if yes_redact == "y":
         for e in events:
             if e.id in sensitive_ids:
                 e_before = e
-                e = _redact_event(e, pattern)
+                e = _redact_event(e, pattern, replace)
                 print(f"\nData before: {e_before.data}")
                 print(f"Data after:  {e.data}")
 
@@ -121,16 +123,16 @@ def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
     return False
 
 
-def _redact_event(e: Event, pattern: Union[str, Pattern]) -> Event:
+def _redact_event(e: Event, pattern: Union[str, Pattern], replace: str) -> Event:
     e = deepcopy(e)
     for k, v in e.data.items():
         if isinstance(v, str):
             if isinstance(pattern, str):
                 if pattern in v.lower():
-                    e.data[k] = REDACTED
+                    e.data[k] = replace
             else:
                 if pattern.findall(v.lower()):
-                    e.data[k] = REDACTED
+                    e.data[k] = replace
     return e
 
 
