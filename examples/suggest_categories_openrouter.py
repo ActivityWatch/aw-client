@@ -137,6 +137,7 @@ def gpt_suggest(
         "https://openrouter.ai/api/v1/chat/completions",
         headers=headers,
         json=json_data,
+        timeout=30,  # seconds
     )
     response.raise_for_status()
 
