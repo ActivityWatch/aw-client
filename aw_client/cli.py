@@ -3,8 +3,10 @@
 import json
 import logging
 import textwrap
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 import click
 from aw_core import Event
@@ -101,6 +103,9 @@ def events(obj: _Context, bucket_id: str):
 @click.option("--json", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
+@click.option("--timezone",
+              help="Time zone for start and stop options."
+              " Must be a valid IANA identifier like e.g. 'Europe/Warsaw'.")
 @click.pass_obj
 def query(
     obj: _Context,
@@ -109,10 +114,17 @@ def query(
     _json: bool,
     start: datetime,
     stop: datetime,
+    timezone: str,
     name: Optional[str] = None,
 ):
     with open(path) as f:
         query = f.read()
+
+    if timezone:
+        zone_info = ZoneInfo(timezone)
+        start = start.replace(tzinfo=zone_info)
+        stop = stop.replace(tzinfo=zone_info)
+
     result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
     if _json:
         print(json.dumps(result))
