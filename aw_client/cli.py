@@ -100,7 +100,7 @@ def events(obj: _Context, bucket_id: str):
 @click.argument("path")
 @click.option("--name")
 @click.option("--cache", is_flag=True)
-@click.option("--json", is_flag=True)
+@click.option("--json", "_json", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
 @click.option("--timezone",
