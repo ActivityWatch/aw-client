@@ -80,5 +80,10 @@ def get_classes() -> List[Tuple[List[str], dict]]:
             "Failed to get classes from server, using default classes as fallback"
         )
         return default_classes
+    if not classes:
+        logger.warning(
+            "Classes setting is empty/unset, using default classes as fallback"
+        )
+        return default_classes
     # map into list of tuples
     return [(v["name"], v["rule"]) for v in classes]
