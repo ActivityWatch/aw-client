@@ -13,7 +13,6 @@ from aw_core import Event
 import aw_client
 from aw_client import queries
 
-
 # set up client
 awc = aw_client.ActivityWatchClient("test")
 
