@@ -15,15 +15,15 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python_version: [3.9]
+        python_version: ["3.10"]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         submodules: 'recursive'
 
     - name: Set up Python
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python_version }}
 

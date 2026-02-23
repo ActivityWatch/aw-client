@@ -103,9 +103,11 @@ def events(obj: _Context, bucket_id: str):
 @click.option("--json", "_json", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
-@click.option("--timezone",
-              help="Time zone for start and stop options."
-              " Must be a valid IANA identifier like e.g. 'Europe/Warsaw'.")
+@click.option(
+    "--timezone",
+    help="Time zone for start and stop options."
+    " Must be a valid IANA identifier like e.g. 'Europe/Warsaw'.",
+)
 @click.pass_obj
 def query(
     obj: _Context,
