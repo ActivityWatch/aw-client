@@ -56,6 +56,7 @@ class QueryParams(_QueryParamsDefaultsBase):
 class _DesktopQueryParamsBase:
     bid_window: str
     bid_afk: str
+    always_active_pattern: Optional[str] = None
 
 
 @dataclass
@@ -114,8 +115,20 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
             (
                 f"""
             not_afk = flood(query_bucket(find_bucket("{params.bid_afk}")));
-            not_afk = filter_keyvals(not_afk, "status", ["not-afk"]);
-            """
+            not_afk = filter_keyvals(not_afk, "status", ["not-afk"]);"""
+                + (
+                    """
+            not_treat_as_afk = filter_keyvals_regex(events, "app", "%s");
+            not_afk = period_union(not_afk, not_treat_as_afk);
+            not_treat_as_afk = filter_keyvals_regex(events, "title", "%s");
+            not_afk = period_union(not_afk, not_treat_as_afk);"""
+                    % (
+                        params.always_active_pattern.replace('"', '\\"'),
+                        params.always_active_pattern.replace('"', '\\"'),
+                    )
+                    if params.always_active_pattern
+                    else ""
+                )
                 if isDesktopParams(params)
                 else ""
             ),
