@@ -177,15 +177,19 @@ class ActivityWatchClient:
         events = self._get(endpoint, params=params).json()
         return [Event(**event) for event in events]
 
-    def insert_event(self, bucket_id: str, event: Event) -> None:
+    def insert_event(self, bucket_id: str, event: Event) -> Event:
         endpoint = f"buckets/{bucket_id}/events"
         data = [event.to_json_dict()]
-        self._post(endpoint, data)
+        response = self._post(endpoint, data)
+        created = response.json()
+        return Event(**created[0]) if created else event
 
-    def insert_events(self, bucket_id: str, events: List[Event]) -> None:
+    def insert_events(self, bucket_id: str, events: List[Event]) -> List[Event]:
         endpoint = f"buckets/{bucket_id}/events"
         data = [event.to_json_dict() for event in events]
-        self._post(endpoint, data)
+        response = self._post(endpoint, data)
+        created = response.json()
+        return [Event(**e) for e in created]
 
     def delete_event(self, bucket_id: str, event_id: int) -> None:
         endpoint = f"buckets/{bucket_id}/events/{event_id}"

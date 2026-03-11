@@ -52,7 +52,11 @@ def test_full():
         e2 = create_unique_event()
         e3 = create_unique_event()
         events = [e1, e2, e3]
-        client.insert_events(bucket_name, events)
+        inserted_events = client.insert_events(bucket_name, events)
+
+        # Check that insert_events returns events with server-assigned IDs
+        assert len(inserted_events) == len(events)
+        assert all(e.id is not None for e in inserted_events)
 
         # Get events
         fetched_events = client.get_events(bucket_name, limit=len(events))
@@ -90,15 +94,18 @@ def test_full():
             )
 
         # Create and delete an event: check that it no longer exists
+        # Also verify that insert_event returns the event with a server-assigned ID
         e_del = create_unique_event()
-        client.insert_event(bucket_name, e_del)
+        e_del_inserted = client.insert_event(bucket_name, e_del)
+        assert e_del_inserted.id is not None
+
         fetched_events = client.get_events(bucket_name)
         assert (e_del.timestamp, e_del.duration, e_del.data) in [
             (e.timestamp, e.duration, e.data) for e in fetched_events
         ]
 
-        e_del_fetched = [e for e in fetched_events if e.data == e_del.data][0]
-        client.delete_event(bucket_name, e_del_fetched)
+        # Use the ID returned from insert_event directly (no need to search for it)
+        client.delete_event(bucket_name, e_del_inserted.id)
         fetched_events = client.get_events(bucket_name)
         assert (e_del.timestamp, e_del.duration, e_del.data) not in [
             (e.timestamp, e.duration, e.data) for e in fetched_events
