@@ -37,6 +37,7 @@ def test_load_local_server_api_key_matches_port(tmp_path, monkeypatch):
 
     assert load_local_server_api_key("127.0.0.1", 5601) == "secret123"
     assert load_local_server_api_key("localhost", "5666") == "testing-secret"
+    assert load_local_server_api_key("::1", 5601) == "secret123"
     assert load_local_server_api_key("127.0.0.1", 5600) is None
     assert load_local_server_api_key("example.com", 5601) is None
 
