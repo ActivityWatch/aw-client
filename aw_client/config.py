@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union
 
 import tomlkit
 from aw_core import dirs
@@ -29,8 +29,8 @@ def load_config():
     return load_config_toml("aw-client", default_config)
 
 
-def load_local_server_api_key(host: str, port: object) -> Optional[str]:
-    if host not in {"127.0.0.1", "localhost"}:
+def load_local_server_api_key(host: str, port: Union[int, str]) -> Optional[str]:
+    if host not in {"127.0.0.1", "localhost", "::1"}:
         return None
 
     try:
@@ -50,7 +50,7 @@ def load_local_server_api_key(host: str, port: object) -> Optional[str]:
             continue
 
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = tomlkit.parse(f.read())
             configured_port = int(str(config.get("port", default_port)))
             if configured_port != requested_port:
