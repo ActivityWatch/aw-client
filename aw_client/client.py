@@ -111,9 +111,7 @@ class ActivityWatchClient:
     def _headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         request_headers = dict(headers or {})
         if self.server_api_key:
-            request_headers.setdefault(
-                "Authorization", f"Bearer {self.server_api_key}"
-            )
+            request_headers.setdefault("Authorization", f"Bearer {self.server_api_key}")
         return request_headers
 
     @always_raise_for_request_errors

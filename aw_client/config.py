@@ -61,6 +61,8 @@ def load_local_server_api_key(host: str, port: object) -> Optional[str]:
             if api_key:
                 return str(api_key)
         except Exception as e:
-            logger.warning("Failed to read aw-server-rust config %s: %s", config_path, e)
+            logger.warning(
+                "Failed to read aw-server-rust config %s: %s", config_path, e
+            )
 
     return None
