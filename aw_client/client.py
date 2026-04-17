@@ -23,7 +23,7 @@ from aw_core.dirs import get_data_dir
 from aw_core.models import Event
 from aw_transform.heartbeats import heartbeat_merge
 
-from .config import load_config
+from .config import load_config, load_local_server_api_key
 from .singleinstance import SingleInstance
 
 # FIXME: This line is probably badly placed
@@ -88,6 +88,7 @@ class ActivityWatchClient:
 
         server_host = host or server_config["hostname"]
         server_port = port or server_config["port"]
+        self.server_api_key = load_local_server_api_key(str(server_host), server_port)
         self.server_address = f"{protocol}://{server_host}:{server_port}"
 
         self.instance = SingleInstance(
@@ -107,9 +108,17 @@ class ActivityWatchClient:
     def _url(self, endpoint: str):
         return f"{self.server_address}/api/0/{endpoint}"
 
+    def _headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        request_headers = dict(headers or {})
+        if self.server_api_key:
+            request_headers.setdefault(
+                "Authorization", f"Bearer {self.server_api_key}"
+            )
+        return request_headers
+
     @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
-        return req.get(self._url(endpoint), params=params)
+        return req.get(self._url(endpoint), params=params, headers=self._headers())
 
     @always_raise_for_request_errors
     def _post(
@@ -118,7 +127,9 @@ class ActivityWatchClient:
         data: Union[List[Any], Dict[str, Any]],
         params: Optional[dict] = None,
     ) -> req.Response:
-        headers = {"Content-type": "application/json", "charset": "utf-8"}
+        headers = self._headers(
+            {"Content-type": "application/json", "charset": "utf-8"}
+        )
         return req.post(
             self._url(endpoint),
             data=bytes(json.dumps(data), "utf8"),
@@ -130,7 +141,7 @@ class ActivityWatchClient:
     def _delete(self, endpoint: str, data: Any = None) -> req.Response:
         if data is None:
             data = {}
-        headers = {"Content-type": "application/json"}
+        headers = self._headers({"Content-type": "application/json"})
         return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
 
     def get_info(self):
