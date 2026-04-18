@@ -185,7 +185,9 @@ class ActivityWatchClient:
             return Event(**response.json()[0])
         return None
 
-    def insert_events(self, bucket_id: str, events: List[Event]) -> Optional[List[Event]]:
+    def insert_events(
+        self, bucket_id: str, events: List[Event]
+    ) -> Optional[List[Event]]:
         endpoint = f"buckets/{bucket_id}/events"
         data = [event.to_json_dict() for event in events]
         response = self._post(endpoint, data)
