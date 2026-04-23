@@ -66,6 +66,7 @@ class ActivityWatchClient:
         host=None,
         port=None,
         protocol="http",
+        api_key: Optional[str] = None,
     ) -> None:
         """
         A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
@@ -90,6 +91,21 @@ class ActivityWatchClient:
         server_port = port or server_config["port"]
         self.server_address = f"{protocol}://{server_host}:{server_port}"
 
+        # API key auth: mirrors AwClient::new_with_api_key in aw-client-rust.
+        # The key is baked into a requests.Session as a default header so every
+        # request carries it automatically — no per-request header logic needed.
+        # An empty string is treated as disabled (same guard as the server).
+        # If not passed explicitly, fall back to the value from the matching
+        # [server] / [server-testing] section of aw-client.toml so the key is
+        # automatically tied to the correct port/server instance.
+        _api_key: Optional[str] = api_key or server_config.get("api_key") or None
+        self._session = req.Session()
+        if _api_key:
+            self._session.headers.update({"Authorization": f"Bearer {_api_key}"})
+            logger.debug("API key authentication enabled")
+        else:
+            logger.debug("API key authentication disabled")
+
         self.instance = SingleInstance(
             f"{self.client_name}-at-{server_host}-on-{server_port}"
         )
@@ -109,7 +125,7 @@ class ActivityWatchClient:
 
     @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
-        return req.get(self._url(endpoint), params=params)
+        return self._session.get(self._url(endpoint), params=params)
 
     @always_raise_for_request_errors
     def _post(
@@ -119,7 +135,7 @@ class ActivityWatchClient:
         params: Optional[dict] = None,
     ) -> req.Response:
         headers = {"Content-type": "application/json", "charset": "utf-8"}
-        return req.post(
+        return self._session.post(
             self._url(endpoint),
             data=bytes(json.dumps(data), "utf8"),
             headers=headers,
@@ -131,7 +147,9 @@ class ActivityWatchClient:
         if data is None:
             data = {}
         headers = {"Content-type": "application/json"}
-        return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
+        return self._session.delete(
+            self._url(endpoint), data=json.dumps(data), headers=headers
+        )
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""

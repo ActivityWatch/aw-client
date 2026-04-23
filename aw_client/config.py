@@ -4,6 +4,7 @@ default_config = """
 [server]
 hostname = "127.0.0.1"
 port = "5600"
+api_key = ""
 
 [client]
 commit_interval = 10
@@ -11,6 +12,7 @@ commit_interval = 10
 [server-testing]
 hostname = "127.0.0.1"
 port = "5666"
+api_key = ""
 
 [client-testing]
 commit_interval = 5
