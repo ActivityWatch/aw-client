@@ -22,6 +22,7 @@ requests = "*"
 persist-queue = "*"
 click = "^8.0"
 tabulate = "*"
+tomlkit = "*"
 typing-extensions = "*"
 
 [tool.poetry.group.dev.dependencies]
