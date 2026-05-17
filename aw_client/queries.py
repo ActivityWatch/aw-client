@@ -250,7 +250,7 @@ def querystr_to_array(querystr: str) -> List[str]:
 
 
 def escape_doublequote(s: str) -> str:
-    return re.sub('/"/g', '\\"', s)
+    return s.replace('"', '\\"')
 
 
 def fullDesktopQuery(
