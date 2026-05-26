@@ -274,7 +274,7 @@ def fullDesktopQuery(
 
     # Add browser-related query parts if browser buckets exist
     if params.bid_browsers:
-        query += """
+        query += f"""
         browser_events = split_url_events(browser_events);
         browser_urls = merge_events_by_keys(browser_events, ["url"]);
         browser_urls = sort_by_duration(browser_urls);
