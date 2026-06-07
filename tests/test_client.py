@@ -125,7 +125,6 @@ def test_queued_usage_warns_once_before_connect():
     queue_warnings = [
         warning
         for warning in caught
-        if "connect()" in str(warning.message)
-        or "with client:" in str(warning.message)
+        if "connect()" in str(warning.message) or "with client:" in str(warning.message)
     ]
     assert len(queue_warnings) == 1
