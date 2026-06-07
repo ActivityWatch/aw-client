@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import time
+import warnings
 from random import random
 from datetime import datetime, timedelta, timezone
 from requests.exceptions import HTTPError
@@ -106,3 +107,25 @@ def test_full():
 
         # Delete bucket
         client.delete_bucket(bucket_name)
+
+
+def test_queued_usage_warns_once_before_connect():
+    client = ActivityWatchClient(f"aw-test-client-{random()}", testing=True)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        client.create_bucket("test-bucket", "test", queued=True)
+        client.heartbeat(
+            "test-bucket",
+            create_unique_event(),
+            pulsetime=1,
+            queued=True,
+        )
+
+    queue_warnings = [
+        warning
+        for warning in caught
+        if "connect()" in str(warning.message)
+        or "with client:" in str(warning.message)
+    ]
+    assert len(queue_warnings) == 1

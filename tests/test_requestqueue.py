@@ -21,12 +21,14 @@ class MockClient:
 
     def __init__(self):
         self.testing = True
+        self.create_bucket_calls = []
 
     def get_buckets(self, *args, **kwargs):
         print("Called get_buckets")
         return [{"id": "test", "name": "Test"}]
 
     def create_bucket(self, *args, **kwargs):
+        self.create_bucket_calls.append((args, kwargs))
         print("Called create_bucket")
 
     def _post(self, *args, **kwargs):
@@ -60,3 +62,29 @@ def test_complex():
     sleep(1)
     rq.stop()
     rq.join()
+
+
+def test_register_bucket_creates_immediately_when_connected():
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    rq.connected = True
+
+    rq.register_bucket("test-bucket", "test-type")
+
+    assert client.create_bucket_calls == [(("test-bucket", "test-type"), {})]
+
+
+def test_register_bucket_marks_queue_disconnected_on_create_failure():
+    class FailingClient(MockClient):
+        def create_bucket(self, *args, **kwargs):
+            super().create_bucket(*args, **kwargs)
+            raise requests.exceptions.ConnectionError()
+
+    client = FailingClient()
+    rq = RequestQueue(client)  # type: ignore
+    rq.connected = True
+
+    rq.register_bucket("test-bucket", "test-type")
+
+    assert rq.connected is False
+    assert client.create_bucket_calls == [(("test-bucket", "test-type"), {})]
