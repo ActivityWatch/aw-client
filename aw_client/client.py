@@ -458,6 +458,10 @@ class ActivityWatchClient:
         )
         self._warned_queue_before_connect = True
 
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """Wait for all queued requests to be sent. See RequestQueue.wait_for_queue_empty."""
+        return self.request_queue.wait_for_queue_empty(timeout=timeout)
+
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
@@ -550,6 +554,26 @@ class RequestQueue(threading.Thread):
 
     def should_stop(self) -> bool:
         return self._stop_event.is_set()
+
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """
+        Wait until the queue is empty, or until timeout (in seconds) is reached.
+        Returns instantly (True) if the queue thread isn't running.
+
+        :param timeout: max time to wait, in seconds. Waits indefinitely if None.
+        :return: True if the queue became empty, False if the timeout was reached.
+        """
+        if not self.is_alive():
+            return True
+
+        start_time = datetime.now()
+        while self._persistqueue.qsize() > 0 or self._current is not None:
+            if timeout is not None and (datetime.now() - start_time).total_seconds() >= timeout:
+                return False
+            if self.wait(0.1):
+                # stop() was called while waiting
+                return False
+        return True
 
     def _dispatch_request(self) -> None:
         request = self._get_next()
