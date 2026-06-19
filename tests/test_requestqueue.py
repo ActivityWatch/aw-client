@@ -73,3 +73,47 @@ def test_add_request_disk_full():
 
     # Should not raise, the OSError should be caught internally and logged instead
     rq.add_request("/api/0/buckets/test/heartbeat", {})
+
+def test_wait_for_queue_empty_basic():
+    """Queue empties normally while connected and running."""
+    client = MockClient()
+    rq = RequestQueue(client) # type: ignore
+    rq.start()
+
+    rq.add_request("/api/0/buckets/test/heartbeat", {})
+    result = rq.wait_for_queue_empty(timeout=5)
+
+    rq.stop()
+    rq.join()
+    assert result is True
+
+
+def test_wait_for_queue_empty_not_running():
+    """Returns True immediately if the queue thread isn't running."""
+    client = MockClient()
+    rq = RequestQueue(client) # type: ignore
+    # Thread never started, should return True instantly
+    result = rq.wait_for_queue_empty(timeout=5)
+    assert result is True
+
+
+def test_wait_for_queue_empty_timeout():
+    """Returns False if the queue doesn't empty before the timeout."""
+    import unittest.mock as mock
+
+    client = MockClient()
+    rq = RequestQueue(client) # type: ignore
+
+    # Make _post block long enough that the queue won't empty before timeout
+    def slow_post(endpoint, data):
+        from time import sleep
+        sleep(10)
+
+    with mock.patch.object(client, "_post", slow_post):
+        rq.start()
+        rq.add_request("/api/0/buckets/test/heartbeat", {})
+        result = rq.wait_for_queue_empty(timeout=0.5)
+        rq.stop()
+        rq.join()
+
+    assert result is False
