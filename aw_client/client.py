@@ -4,6 +4,7 @@ import logging
 import os
 import socket
 import threading
+import warnings
 from collections import namedtuple
 from datetime import datetime
 from time import sleep
@@ -100,6 +101,7 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
+        self._warned_queue_before_connect = False
 
     #
     #   Get/Post base requests
@@ -243,6 +245,7 @@ class ActivityWatchClient:
         _commit_interval = commit_interval or self.commit_interval
 
         if queued:
+            self._warn_queue_before_connect()
             # Pre-merge heartbeats
             if bucket_id not in self.last_heartbeat:
                 self.last_heartbeat[bucket_id] = event
@@ -278,6 +281,7 @@ class ActivityWatchClient:
 
     def create_bucket(self, bucket_id: str, event_type: str, queued=False):
         if queued:
+            self._warn_queue_before_connect()
             self.request_queue.register_bucket(bucket_id, event_type)
         else:
             endpoint = f"buckets/{bucket_id}"
@@ -380,6 +384,8 @@ class ActivityWatchClient:
 
         # Throw away old thread object, create new one since same thread cannot be started twice
         self.request_queue = RequestQueue(self)
+        # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
+        self._warned_queue_before_connect = False
 
     def wait_for_start(self, timeout: int = 10) -> None:
         """Wait for the server to start by trying to get the server info."""
@@ -394,6 +400,18 @@ class ActivityWatchClient:
                 sleep_time *= 2
         else:
             raise Exception(f"Server at {self.server_address} did not start in time")
+
+    def _warn_queue_before_connect(self) -> None:
+        if self._warned_queue_before_connect or self.request_queue.is_alive():
+            return
+
+        warnings.warn(
+            "Queued requests require calling connect() or using `with client:` "
+            "before buckets can be created and queued events can flush.",
+            UserWarning,
+            stacklevel=3,
+        )
+        self._warned_queue_before_connect = True
 
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
@@ -554,4 +572,13 @@ class RequestQueue(threading.Thread):
         self._persistqueue.put(QueuedRequest(endpoint, data))
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
-        self._registered_buckets.append(Bucket(bucket_id, event_type))
+        bucket = Bucket(bucket_id, event_type)
+        self._registered_buckets.append(bucket)
+
+        if not self.connected:
+            return
+
+        try:
+            self.client.create_bucket(bucket_id, event_type)
+        except req.RequestException:
+            self.connected = False
