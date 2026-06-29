@@ -384,6 +384,8 @@ class ActivityWatchClient:
 
         # Throw away old thread object, create new one since same thread cannot be started twice
         self.request_queue = RequestQueue(self)
+        # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
+        self._warned_queue_before_connect = False
 
     def wait_for_start(self, timeout: int = 10) -> None:
         """Wait for the server to start by trying to get the server info."""
