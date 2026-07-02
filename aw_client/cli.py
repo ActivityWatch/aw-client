@@ -218,12 +218,12 @@ def _parse_events(events: List[dict]) -> List[Event]:
 
 
 def print_top(events: List[Event], key=lambda e: e.data, title="Events", n=10):
-    print(f"Top {n} {title}" + (f" (out of {len(events)})" if len(events) > 10 else ""))
+    print(f"Top {n} {title}" + (f" (out of {len(events)})" if len(events) > n else ""))
     print(
         tabulate(
             [
                 (event.duration, key(event))
-                for event in sorted(events, key=lambda e: e.duration, reverse=True)[:10]
+                for event in sorted(events, key=lambda e: e.duration, reverse=True)[:n]
             ],
             headers=["Duration", "Key"],
         )

@@ -205,7 +205,6 @@ class ActivityWatchClient:
     def get_eventcount(
         self,
         bucket_id: str,
-        limit: int = -1,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
     ) -> int:
