@@ -547,6 +547,11 @@ class RequestQueue(threading.Thread):
 
     VERSION = 1  # update this whenever the queue-file format changes
 
+    # HTTP statuses that indicate a transient server-side problem, for which
+    # requests are kept in the queue and retried (dropped on anything else).
+    # 503 in particular is sent by aw-server when the heartbeat lock times out.
+    RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
     def __init__(
         self,
         client: ActivityWatchClient,
@@ -657,13 +662,12 @@ class RequestQueue(threading.Thread):
 
         try:
             self.client._post(request.endpoint, request.data)
-        except req.exceptions.ConnectTimeout:
+        except (req.exceptions.ConnectionError, req.exceptions.Timeout):
             # Triggered by:
             #   - server not running (connection refused)
             #   - server not responding (timeout)
-            # Safe to retry according to requests docs:
-            #   https://requests.readthedocs.io/en/latest/api/#requests.ConnectTimeout
-
+            # Keep the request in the queue and go back to waiting for the
+            # server to become available (the run loop reconnects).
             self.connected = False
             logger.warning(
                 "Connection refused or timeout, will queue requests until connection is available."
@@ -674,20 +678,29 @@ class RequestQueue(threading.Thread):
             sleep(0.5)
             return
         except req.RequestException as e:
-            if e.response and e.response.status_code == 400:
-                # HTTP 400 - Bad request
-                # Example case: https://github.com/ActivityWatch/activitywatch/issues/815
-                # We don't want to retry, because a bad payload is likely to fail forever.
-                logger.error(f"Bad request, not retrying: {request.data}")
-            elif e.response and e.response.status_code == 500:
-                # HTTP 500 - Internal server error
-                # It is possible that the server is in a bad state (and will recover on restart),
-                # in which case we want to retry. I hope this can never caused by a bad payload.
-                logger.error(f"Internal server error, retrying: {request.data}")
+            # NOTE: `e.response is not None` matters: Response.__bool__ is
+            # False for any non-2xx status, so a plain `if e.response` never
+            # matches an error response.
+            status_code = e.response.status_code if e.response is not None else None
+            if status_code in self.RETRY_STATUS_CODES:
+                # Transient server-side problem (busy, overloaded, restarting
+                # or behind a flaky proxy) - the request itself is likely
+                # fine, so keep it in the queue and retry. Heartbeats are safe
+                # to replay: a duplicate of an already-processed heartbeat
+                # merges into the last event as a no-op.
+                logger.warning(
+                    f"Server error {status_code}, will retry: {request.endpoint}"
+                )
                 sleep(0.5)
                 return
             else:
-                logger.exception(f"Unknown error, not retrying: {request.data}")
+                # Client errors (e.g. HTTP 400 - bad request, see
+                # https://github.com/ActivityWatch/activitywatch/issues/815)
+                # are likely to fail forever, so drop the request instead of
+                # blocking the queue.
+                logger.error(
+                    f"Request failed ({status_code}), not retrying: {request.data}"
+                )
         except Exception:
             logger.exception(f"Unknown error, not retrying: {request.data}")
 
