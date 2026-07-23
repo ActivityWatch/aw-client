@@ -275,3 +275,21 @@ def test_dispatch_keeps_queue_on_connection_error():
 
     assert rq._get_next() is not None  # still queued
     assert rq.connected is False
+
+
+def test_retry_delay_honors_retry_after():
+    from aw_client.client import _retry_delay, RETRY_DELAY_DEFAULT, RETRY_DELAY_MAX
+
+    def resp(retry_after=None):
+        r = requests.Response()
+        r.status_code = 429
+        if retry_after is not None:
+            r.headers["Retry-After"] = retry_after
+        return r
+
+    assert _retry_delay(resp()) == RETRY_DELAY_DEFAULT  # absent
+    assert _retry_delay(resp("2")) == 2.0  # delta-seconds
+    assert _retry_delay(resp("9999")) == RETRY_DELAY_MAX  # capped
+    assert _retry_delay(resp("0")) == RETRY_DELAY_DEFAULT  # floored
+    # HTTP-date form is not parsed, falls back to default
+    assert _retry_delay(resp("Wed, 21 Oct 2026 07:28:00 GMT")) == RETRY_DELAY_DEFAULT

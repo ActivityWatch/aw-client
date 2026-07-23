@@ -536,6 +536,21 @@ class ActivityWatchClient:
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
 
+# Bounds for the delay before retrying a queued request after a
+# transient server error (e.g. 429/503), honoring Retry-After if given.
+RETRY_DELAY_DEFAULT = 0.5
+RETRY_DELAY_MAX = 60.0
+
+
+def _retry_delay(response: req.Response) -> float:
+    """Delay before retrying, honoring the Retry-After header (delta-seconds
+    form) if present and sane; the HTTP-date form falls back to the default."""
+    try:
+        delay = float(response.headers.get("Retry-After", RETRY_DELAY_DEFAULT))
+    except ValueError:
+        return RETRY_DELAY_DEFAULT
+    return max(RETRY_DELAY_DEFAULT, min(delay, RETRY_DELAY_MAX))
+
 
 class RequestQueue(threading.Thread):
     """Used to asynchronously send heartbeats.
@@ -681,17 +696,20 @@ class RequestQueue(threading.Thread):
             # NOTE: `e.response is not None` matters: Response.__bool__ is
             # False for any non-2xx status, so a plain `if e.response` never
             # matches an error response.
-            status_code = e.response.status_code if e.response is not None else None
-            if status_code in self.RETRY_STATUS_CODES:
+            response = e.response
+            status_code = response.status_code if response is not None else None
+            if response is not None and status_code in self.RETRY_STATUS_CODES:
                 # Transient server-side problem (busy, overloaded, restarting
                 # or behind a flaky proxy) - the request itself is likely
                 # fine, so keep it in the queue and retry. Heartbeats are safe
                 # to replay: a duplicate of an already-processed heartbeat
                 # merges into the last event as a no-op.
+                delay = _retry_delay(response)
                 logger.warning(
-                    f"Server error {status_code}, will retry: {request.endpoint}"
+                    f"Server error {status_code}, will retry in {delay}s: {request.endpoint}"
                 )
-                sleep(0.5)
+                # stop-aware wait, so a long Retry-After can't block shutdown
+                self.wait(delay)
                 return
             else:
                 # Client errors (e.g. HTTP 400 - bad request, see
