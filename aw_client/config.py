@@ -49,14 +49,23 @@ def load_config():
 
 
 def _user_data_dir(appname: str) -> str:
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        return os.path.join(os.path.expanduser(xdg_data_home), appname)
     return platformdirs.user_data_dir(appname)
 
 
 def _user_config_dir(appname: str) -> str:
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return os.path.join(os.path.expanduser(xdg_config_home), appname)
     return platformdirs.user_config_dir(appname)
 
 
 def _user_cache_dir(appname: str) -> str:
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return os.path.join(os.path.expanduser(xdg_cache_home), appname)
     return platformdirs.user_cache_dir(appname)
 
 
