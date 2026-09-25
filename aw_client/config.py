@@ -48,6 +48,11 @@ def load_config():
     return load_config_toml("aw-client", default_config)
 
 
+# Directory resolution must match the server, which writes the files we read
+# (e.g. the local API key in aw-server-rust/config.toml). aw-server-rust uses
+# the `dirs` crate and aw-core/aw-server use platformdirs: both honor XDG_*
+# on Linux and ignore it on macOS/Windows. Do not add XDG_* handling here
+# (see #119); in tests, patch these wrappers instead of setting env vars.
 def _user_data_dir(appname: str) -> str:
     return platformdirs.user_data_dir(appname)
 
