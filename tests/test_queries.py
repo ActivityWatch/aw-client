@@ -16,6 +16,7 @@ from aw_query import query2
 from aw_client.queries import (
     AndroidQueryParams,
     DesktopQueryParams,
+    browsersWithBuckets,
     canonicalMultideviceEvents,
     isAndroidParams,
     isDesktopParams,
@@ -385,3 +386,18 @@ def test_audible_browser_counts_as_active(datastore):
     host_params = multideviceHostParams(_buckets(ds), classes=CLASSES)
     events = _run(ds, canonicalMultideviceEvents(host_params) + "\nRETURN = events;")
     assert _minutes(events) == pytest.approx(60)
+
+
+def test_browser_bucket_not_matched_by_hostname():
+    buckets = [
+        "aw-watcher-web-firefox_chrome-box",
+        "aw-watcher-web-chrome_chrome-box",
+        "aw-watcher-web-firefox-synced-from-chrome-box",
+    ]
+    assert dict(browsersWithBuckets(buckets)) == {
+        "firefox": "aw-watcher-web-firefox_chrome-box",
+        "chrome": "aw-watcher-web-chrome_chrome-box",
+    }
+    assert dict(browsersWithBuckets(buckets[2:])) == {
+        "firefox": "aw-watcher-web-firefox-synced-from-chrome-box"
+    }

@@ -441,7 +441,10 @@ def pretty_query(query: str) -> str:
 
 def _browser_in_buckets(browser: str, browserbuckets: List[str]) -> Optional[str]:
     for bucket in browserbuckets:
-        if browser in bucket:
+        # Match only the watcher part of the ID (e.g. "aw-watcher-web-firefox"),
+        # not the hostname suffix, which may itself contain a browser name.
+        watcher = _base_bucket_id(bucket).split("_", 1)[0]
+        if browser in watcher:
             return bucket
     return None
 
