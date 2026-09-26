@@ -302,3 +302,86 @@ def test_discovery_falls_back_to_synced_from_suffix():
     (params,) = multideviceHostParams(buckets)
     assert isDesktopParams(params)
     assert params.bid_window == "aw-watcher-window_desk-synced-from-desk"
+
+
+def test_discovery_browser_buckets_desktop_only():
+    buckets = {
+        "aw-watcher-window_desk": _meta("currentwindow", "desk"),
+        "aw-watcher-afk_desk": _meta("afkstatus", "desk"),
+        "aw-watcher-web-firefox_desk": _meta("web.tab.current", "desk"),
+        # Browser bucket without a host cannot be attributed
+        "aw-watcher-web-chrome": _meta("web.tab.current", "unknown"),
+        "aw-watcher-android-synced-from-phone": _meta("currentwindow", "phone"),
+        "aw-watcher-android-web-synced-from-phone": _meta("web.tab.current", "phone"),
+    }
+    desk, phone = multideviceHostParams(buckets)
+    assert isDesktopParams(desk)
+    assert desk.bid_browsers == ["aw-watcher-web-firefox_desk"]
+    assert isAndroidParams(phone)
+    assert phone.bid_browsers == []
+
+    # Explicit bid_browsers is passed to desktop hosts only
+    desk, phone = multideviceHostParams(buckets, bid_browsers=["x"])
+    assert desk.bid_browsers == ["x"]
+    assert phone.bid_browsers == []
+
+
+def test_discovery_priority_uses_selected_buckets():
+    buckets = {
+        # phone1's newest bucket is a test bucket that is not selected
+        "aw-watcher-android-synced-from-phone1": _meta(
+            "currentwindow", "phone1", "2026-01-01"
+        ),
+        "aw-watcher-android-test-synced-from-phone1": _meta(
+            "currentwindow", "phone1", "2026-09-01"
+        ),
+        "aw-watcher-android-synced-from-phone2": _meta(
+            "currentwindow", "phone2", "2026-06-01"
+        ),
+    }
+    params = multideviceHostParams(buckets)
+    assert [p.bid_android for p in params if isAndroidParams(p)] == [
+        "aw-watcher-android-synced-from-phone2",
+        "aw-watcher-android-synced-from-phone1",
+    ]
+
+
+def test_discovery_unknown_hostname_falls_back_to_data():
+    buckets = {
+        "aw-import-screentime_ipad": {
+            "type": "app",
+            "hostname": "unknown",
+            "data": {"hostname": "ipad"},
+        },
+    }
+    (params,) = multideviceHostParams(buckets)
+    assert isAndroidParams(params)
+    assert params.bid_android == "aw-import-screentime_ipad"
+
+
+def test_audible_browser_counts_as_active(datastore):
+    ds = datastore
+    _insert(
+        ds,
+        "aw-watcher-window_desk",
+        "currentwindow",
+        "desk",
+        [(0, 60, {"app": "Firefox", "title": "video"})],
+    )
+    _insert(
+        ds,
+        "aw-watcher-afk_desk",
+        "afkstatus",
+        "desk",
+        [(0, 20, {"status": "not-afk"}), (20, 60, {"status": "afk"})],
+    )
+    _insert(
+        ds,
+        "aw-watcher-web-firefox_desk",
+        "web.tab.current",
+        "desk",
+        [(0, 60, {"url": "https://example.com", "title": "video", "audible": True})],
+    )
+    host_params = multideviceHostParams(_buckets(ds), classes=CLASSES)
+    events = _run(ds, canonicalMultideviceEvents(host_params) + "\nRETURN = events;")
+    assert _minutes(events) == pytest.approx(60)

@@ -27,7 +27,6 @@ import aw_client
 
 from .classes import get_classes
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -293,12 +292,12 @@ _SYNCED_FROM = "-synced-from-"
 
 
 def _bucket_hostname(bid: str, bucket: Dict[str, Any]) -> Optional[str]:
-    hostname = bucket.get("hostname") or (bucket.get("data") or {}).get("hostname")
-    if (not hostname or hostname == "unknown") and _SYNCED_FROM in bid:
-        hostname = bid.rsplit(_SYNCED_FROM, 1)[1]
-    if not hostname or hostname == "unknown":
-        return None
-    return hostname
+    candidates = [
+        bucket.get("hostname"),
+        (bucket.get("data") or {}).get("hostname"),
+        bid.rsplit(_SYNCED_FROM, 1)[1] if _SYNCED_FROM in bid else None,
+    ]
+    return next((h for h in candidates if h and h != "unknown"), None)
 
 
 def _base_bucket_id(bid: str) -> str:
@@ -306,18 +305,19 @@ def _base_bucket_id(bid: str) -> str:
     return bid.split(_SYNCED_FROM, 1)[0]
 
 
-def _pick_bucket(
-    candidates: List[Tuple[str, Dict[str, Any]]], canonical_prefixes: Sequence[str]
-) -> Optional[str]:
-    """Pick the best bucket among candidates for one host and role.
+_Candidate = Tuple[str, Dict[str, Any]]
+
+
+def _rank_buckets(
+    candidates: List[_Candidate], canonical_prefixes: Sequence[str] = ()
+) -> List[_Candidate]:
+    """Sort candidate buckets for one host and role, best first.
 
     Prefers buckets whose (unsynced) ID uses the watcher's canonical naming,
     then local buckets over synced copies, then the most recently updated.
     """
-    if not candidates:
-        return None
 
-    def rank(item: Tuple[str, Dict[str, Any]]) -> Tuple[bool, bool, str]:
+    def rank(item: _Candidate) -> Tuple[bool, bool, str]:
         bid, bucket = item
         base = _base_bucket_id(bid)
         canonical = any(
@@ -326,7 +326,14 @@ def _pick_bucket(
         )
         return (canonical, _SYNCED_FROM not in bid, bucket.get("last_updated") or "")
 
-    return max(candidates, key=rank)[0]
+    return sorted(candidates, key=rank, reverse=True)
+
+
+def _pick_bucket(
+    candidates: List[_Candidate], canonical_prefixes: Sequence[str]
+) -> Optional[_Candidate]:
+    ranked = _rank_buckets(candidates, canonical_prefixes)
+    return ranked[0] if ranked else None
 
 
 def multideviceHostParams(
@@ -340,7 +347,10 @@ def multideviceHostParams(
     are identified by the bucket ``hostname`` field, which aw-sync preserves
     for synced buckets (whose IDs carry a ``-synced-from-<host>`` suffix).
 
-    - Hosts with both a window and an AFK bucket become ``DesktopQueryParams``.
+    - Hosts with both a window and an AFK bucket become ``DesktopQueryParams``,
+      including any browser buckets attributed to that host (unless
+      ``bid_browsers`` is passed explicitly). Browser buckets without a known
+      hostname cannot be attributed to a host and are not included.
     - Hosts with only an Android (or imported ScreenTime) bucket become
       ``AndroidQueryParams`` (no AFK filtering, as mobile hosts have no AFK bucket).
     - Other hosts are skipped.
@@ -352,10 +362,9 @@ def multideviceHostParams(
 
     Remaining keyword arguments (e.g. ``classes``, ``filter_classes``,
     ``filter_afk``, ``always_active_pattern``) are passed to every params object
-    (``always_active_pattern`` only to desktop hosts).
+    (``always_active_pattern`` and ``bid_browsers`` only to desktop hosts).
     """
-    by_host: Dict[str, Dict[str, List[Tuple[str, Dict[str, Any]]]]] = {}
-    last_updated: Dict[str, str] = {}
+    by_host: Dict[str, Dict[str, List[_Candidate]]] = {}
     for bid, bucket in buckets.items():
         hostname = _bucket_hostname(bid, bucket)
         if hostname is None:
@@ -369,31 +378,46 @@ def multideviceHostParams(
             role = "android"
         elif btype == "currentwindow":
             role = "window"
+        elif btype == "web.tab.current" and not bid.startswith("aw-watcher-android"):
+            role = "browser"
         else:
             continue
         by_host.setdefault(hostname, {}).setdefault(role, []).append((bid, bucket))
-        last_updated[hostname] = max(
-            last_updated.get(hostname, ""), bucket.get("last_updated") or ""
-        )
 
-    desktop_common = dict(common)
-    android_common = {k: v for k, v in common.items() if k != "always_active_pattern"}
+    android_common = {
+        k: v
+        for k, v in common.items()
+        if k not in ("always_active_pattern", "bid_browsers")
+    }
 
     result: Dict[str, HostQueryParams] = {}
+    # Last activity of the buckets actually selected for each host (for ordering)
+    last_updated: Dict[str, str] = {}
     for hostname, roles in by_host.items():
-        bid_window = _pick_bucket(roles.get("window", []), ["aw-watcher-window_"])
-        bid_afk = _pick_bucket(roles.get("afk", []), ["aw-watcher-afk_"])
-        bid_android = _pick_bucket(
+        window = _pick_bucket(roles.get("window", []), ["aw-watcher-window_"])
+        afk = _pick_bucket(roles.get("afk", []), ["aw-watcher-afk_"])
+        android = _pick_bucket(
             roles.get("android", []), ["aw-watcher-android_", "aw-import-screentime"]
         )
-        if bid_window and bid_afk:
+        selected: List[_Candidate]
+        if window and afk:
+            desktop_common = dict(common)
+            if "bid_browsers" not in desktop_common:
+                desktop_common["bid_browsers"] = [
+                    bid for bid, _ in _rank_buckets(roles.get("browser", []))
+                ]
             result[hostname] = DesktopQueryParams(
-                bid_window=bid_window, bid_afk=bid_afk, **desktop_common
+                bid_window=window[0], bid_afk=afk[0], **desktop_common
             )
-        elif bid_android:
+            selected = [window, afk]
+        elif android:
             result[hostname] = AndroidQueryParams(
-                bid_android=bid_android, **android_common
+                bid_android=android[0], **android_common
             )
+            selected = [android]
+        else:
+            continue
+        last_updated[hostname] = max(b.get("last_updated") or "" for _, b in selected)
 
     if hosts is not None:
         for host in hosts:
