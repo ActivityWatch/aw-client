@@ -401,3 +401,15 @@ def test_browser_bucket_not_matched_by_hostname():
     assert dict(browsersWithBuckets(buckets[2:])) == {
         "firefox": "aw-watcher-web-firefox-synced-from-chrome-box"
     }
+
+
+from aw_client.queries import escape_doublequote
+
+
+def test_escape_doublequote():
+    # Regression: this once used a JS-style regex ('/"/g') and never matched.
+    assert (
+        escape_doublequote('aw-watcher-window_"host"') == 'aw-watcher-window_\\"host\\"'
+    )
+    assert escape_doublequote("no quotes") == "no quotes"
+    assert escape_doublequote("") == ""
