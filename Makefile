@@ -5,7 +5,7 @@ build:
 
 test:
 	python -c "import aw_client"
-	pytest -s -vv tests/test_requestqueue.py tests/test_profile.py tests/test_profile_config.py
+	pytest -s -vv tests/test_requestqueue.py tests/test_profile.py tests/test_profile_config.py tests/test_queries.py
 
 test-integration:
 	pytest -v tests/test_client.py

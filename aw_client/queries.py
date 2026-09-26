@@ -10,17 +10,24 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
+    Any,
+    Dict,
     List,
     Optional,
+    Sequence,
     Tuple,
     Union,
 )
 
 from typing_extensions import TypeGuard
 
+import logging
+
 import aw_client
 
 from .classes import get_classes
+
+logger = logging.getLogger(__name__)
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -82,7 +89,39 @@ def isAndroidParams(params: QueryParams) -> TypeGuard[AndroidQueryParams]:
     return isinstance(params, AndroidQueryParams)
 
 
-def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> str:
+def _query_bucket(bid: str, exact: bool) -> str:
+    """Query a bucket by exact ID, or by prefix via find_bucket.
+
+    Exact IDs avoid find_bucket matching the wrong bucket when similar names
+    exist (e.g. host vs host.localdomain). See ActivityWatch/aw-webui#590.
+    """
+    if exact:
+        return f'query_bucket("{bid}")'
+    return f'query_bucket(find_bucket("{bid}"))'
+
+
+def canonicalEvents(
+    params: Union[DesktopQueryParams, AndroidQueryParams],
+    *,
+    return_variable_suffix: Optional[str] = None,
+    merge_android: bool = True,
+    exact_bucket_ids: bool = False,
+) -> str:
+    """Build the query fragment that computes the canonical `events` for one host.
+
+    Puts its results in `events` and `not_afk`. Android buckets have no AFK
+    concept, so on Android `not_afk` is the app events themselves.
+
+    Keyword arguments (used by :func:`canonicalMultideviceEvents`):
+
+    - ``return_variable_suffix``: also store results in ``events_<suffix>``
+      and ``not_afk_<suffix>`` so several hosts can be combined in one query.
+    - ``merge_android``: merge Android events by app (reduces event count, but
+      the merged events no longer have meaningful timestamps, so disable it
+      when the events are combined with other timelines).
+    - ``exact_bucket_ids``: bucket IDs are exact, use ``query_bucket``
+      directly instead of prefix-matching with ``find_bucket``.
+    """
     if not params.classes:
         # if categories not explicitly set,
         # get categories from server settings
@@ -104,17 +143,17 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
     return "\n".join(
         [
             # Fetch window/app events
-            f'events = flood(query_bucket(find_bucket("{bid_window}")));',
+            f"events = flood({_query_bucket(bid_window, exact_bucket_ids)});",
             # On Android, merge events to avoid overload of events
             (
                 'events = merge_events_by_keys(events, ["app"]);'
-                if isAndroidParams(params)
+                if isAndroidParams(params) and merge_android
                 else ""
             ),
             # Fetch not-afk events
             (
                 f"""
-            not_afk = flood(query_bucket(find_bucket("{params.bid_afk}")));
+            not_afk = flood({_query_bucket(params.bid_afk, exact_bucket_ids)});
             not_afk = filter_keyvals(not_afk, "status", ["not-afk"]);"""
                 + (
                     """
@@ -130,7 +169,9 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
                     else ""
                 )
                 if isDesktopParams(params)
-                else ""
+                # Android has no AFK bucket: treat all app events as active
+                # (matches the single-device Android view in aw-webui).
+                else "not_afk = events;"
             ),
             # Fetch browser events
             (
@@ -160,8 +201,238 @@ def canonicalEvents(params: Union[DesktopQueryParams, AndroidQueryParams]) -> st
                 if params.filter_classes
                 else ""
             ),
+            # "Return" events by storing them in host-suffixed variables
+            (
+                f"events_{return_variable_suffix} = events;\n"
+                f"not_afk_{return_variable_suffix} = not_afk;"
+                if return_variable_suffix
+                else ""
+            ),
         ]
     )
+
+
+HostQueryParams = Union[DesktopQueryParams, AndroidQueryParams]
+
+
+def safe_hostname(hostname: str) -> str:
+    """Strip a hostname down to characters valid in a query variable name."""
+    return re.sub(r"[^a-zA-Z0-9_]", "", hostname)
+
+
+def canonicalMultideviceEvents(host_params: Sequence[HostQueryParams]) -> str:
+    """Build a query computing canonical `events` and `not_afk` across several hosts.
+
+    Each element of ``host_params`` describes one host (desktop or Android)
+    with exact bucket IDs, for example as returned by :func:`multideviceHostParams`.
+    Every host is queried individually (with its own AFK filtering), and the
+    per-host results are then combined with ``union_no_overlap``. The order of
+    ``host_params`` is the priority order: where hosts overlap in time, the
+    earlier host wins and later hosts only fill the gaps, so time is never
+    double counted.
+
+    Follows ``canonicalMultideviceEvents`` in aw-webui, with one difference:
+    Android events are not merged by app before the union, since merged
+    events keep only the first timestamp and would claim time they did not
+    cover.
+
+    Classes are resolved once (from the first host's params, or the server
+    settings if none are set) and applied to every host.
+    """
+    if not host_params:
+        return "events = [];\nnot_afk = [];"
+
+    classes = next((p.classes for p in host_params if p.classes), None)
+    if not classes:
+        classes = get_classes()
+
+    fragments = []
+    suffixes = []
+    for i, params in enumerate(host_params):
+        # Include the index so hosts that sanitize to the same name cannot collide
+        if isinstance(params, DesktopQueryParams):
+            bid = params.bid_window
+        else:
+            bid = params.bid_android
+        suffix = f"{i}_{safe_hostname(bid)}"
+        suffixes.append(suffix)
+        if isinstance(params, DesktopQueryParams):
+            params = dataclasses.replace(
+                params,
+                classes=classes,
+                bid_window=escape_doublequote(params.bid_window),
+                bid_afk=escape_doublequote(params.bid_afk),
+                bid_browsers=[escape_doublequote(b) for b in params.bid_browsers],
+            )
+        else:
+            params = dataclasses.replace(
+                params,
+                classes=classes,
+                bid_android=escape_doublequote(params.bid_android),
+            )
+        fragments.append(
+            canonicalEvents(
+                params,
+                return_variable_suffix=suffix,
+                merge_android=False,
+                exact_bucket_ids=True,
+            )
+        )
+
+    lines = fragments + ["events = [];", "not_afk = [];"]
+    for suffix in suffixes:
+        lines += [
+            f"events = union_no_overlap(events, sort_by_timestamp(events_{suffix}));",
+            f"not_afk = union_no_overlap(not_afk, sort_by_timestamp(not_afk_{suffix}));",
+        ]
+    return "\n".join(lines)
+
+
+_SYNCED_FROM = "-synced-from-"
+
+
+def _bucket_hostname(bid: str, bucket: Dict[str, Any]) -> Optional[str]:
+    candidates = [
+        bucket.get("hostname"),
+        (bucket.get("data") or {}).get("hostname"),
+        bid.rsplit(_SYNCED_FROM, 1)[1] if _SYNCED_FROM in bid else None,
+    ]
+    return next((h for h in candidates if h and h != "unknown"), None)
+
+
+def _base_bucket_id(bid: str) -> str:
+    """Bucket ID without any ``-synced-from-<host>`` suffix."""
+    return bid.split(_SYNCED_FROM, 1)[0]
+
+
+_Candidate = Tuple[str, Dict[str, Any]]
+
+
+def _rank_buckets(
+    candidates: List[_Candidate], canonical_prefixes: Sequence[str] = ()
+) -> List[_Candidate]:
+    """Sort candidate buckets for one host and role, best first.
+
+    Prefers buckets whose (unsynced) ID uses the watcher's canonical naming,
+    then local buckets over synced copies, then the most recently updated.
+    """
+
+    def rank(item: _Candidate) -> Tuple[bool, bool, str]:
+        bid, bucket = item
+        base = _base_bucket_id(bid)
+        canonical = any(
+            base == prefix.rstrip("_") or base.startswith(prefix)
+            for prefix in canonical_prefixes
+        )
+        return (canonical, _SYNCED_FROM not in bid, bucket.get("last_updated") or "")
+
+    return sorted(candidates, key=rank, reverse=True)
+
+
+def _pick_bucket(
+    candidates: List[_Candidate], canonical_prefixes: Sequence[str]
+) -> Optional[_Candidate]:
+    ranked = _rank_buckets(candidates, canonical_prefixes)
+    return ranked[0] if ranked else None
+
+
+def multideviceHostParams(
+    buckets: Dict[str, Dict[str, Any]],
+    hosts: Optional[Sequence[str]] = None,
+    **common: Any,
+) -> List[HostQueryParams]:
+    """Discover per-host query params from bucket metadata.
+
+    ``buckets`` is the result of ``ActivityWatchClient.get_buckets()``. Hosts
+    are identified by the bucket ``hostname`` field, which aw-sync preserves
+    for synced buckets (whose IDs carry a ``-synced-from-<host>`` suffix).
+
+    - Hosts with both a window and an AFK bucket become ``DesktopQueryParams``,
+      including any browser buckets attributed to that host (unless
+      ``bid_browsers`` is passed explicitly). Browser buckets without a known
+      hostname cannot be attributed to a host and are not included.
+    - Hosts with only an Android (or imported ScreenTime) bucket become
+      ``AndroidQueryParams`` (no AFK filtering, as mobile hosts have no AFK bucket).
+    - Other hosts are skipped.
+
+    If ``hosts`` is given, only those hosts are included, in that order (the
+    order is the priority order used by :func:`canonicalMultideviceEvents`).
+    Otherwise all hosts are included, desktop hosts first, each group ordered
+    by most recently updated.
+
+    Remaining keyword arguments (e.g. ``classes``, ``filter_classes``,
+    ``filter_afk``, ``always_active_pattern``) are passed to every params object
+    (``always_active_pattern`` and ``bid_browsers`` only to desktop hosts).
+    """
+    by_host: Dict[str, Dict[str, List[_Candidate]]] = {}
+    for bid, bucket in buckets.items():
+        hostname = _bucket_hostname(bid, bucket)
+        if hostname is None:
+            continue
+        btype = bucket.get("type")
+        if btype == "afkstatus":
+            role = "afk"
+        elif btype == "currentwindow" and bid.startswith("aw-watcher-android"):
+            role = "android"
+        elif btype == "app" and bid.startswith("aw-import-screentime"):
+            role = "android"
+        elif btype == "currentwindow":
+            role = "window"
+        elif btype == "web.tab.current" and not bid.startswith("aw-watcher-android"):
+            role = "browser"
+        else:
+            continue
+        by_host.setdefault(hostname, {}).setdefault(role, []).append((bid, bucket))
+
+    android_common = {
+        k: v
+        for k, v in common.items()
+        if k not in ("always_active_pattern", "bid_browsers")
+    }
+
+    result: Dict[str, HostQueryParams] = {}
+    # Last activity of the buckets actually selected for each host (for ordering)
+    last_updated: Dict[str, str] = {}
+    for hostname, roles in by_host.items():
+        window = _pick_bucket(roles.get("window", []), ["aw-watcher-window_"])
+        afk = _pick_bucket(roles.get("afk", []), ["aw-watcher-afk_"])
+        android = _pick_bucket(
+            roles.get("android", []), ["aw-watcher-android_", "aw-import-screentime"]
+        )
+        selected: List[_Candidate]
+        if window and afk:
+            desktop_common = dict(common)
+            if "bid_browsers" not in desktop_common:
+                desktop_common["bid_browsers"] = [
+                    bid for bid, _ in _rank_buckets(roles.get("browser", []))
+                ]
+            result[hostname] = DesktopQueryParams(
+                bid_window=window[0], bid_afk=afk[0], **desktop_common
+            )
+            selected = [window, afk]
+        elif android:
+            result[hostname] = AndroidQueryParams(
+                bid_android=android[0], **android_common
+            )
+            selected = [android]
+        else:
+            continue
+        last_updated[hostname] = max(b.get("last_updated") or "" for _, b in selected)
+
+    if hosts is not None:
+        for host in hosts:
+            if host not in result:
+                logger.warning(
+                    f"Skipping host {host} in multidevice query: no window+afk or android bucket"
+                )
+        return [result[host] for host in hosts if host in result]
+
+    ordered = sorted(
+        result,
+        key=lambda h: (isDesktopParams(result[h]), last_updated.get(h, "")),
+        reverse=True,
+    )
+    return [result[host] for host in ordered]
 
 
 def pretty_query(query: str) -> str:
@@ -170,7 +441,10 @@ def pretty_query(query: str) -> str:
 
 def _browser_in_buckets(browser: str, browserbuckets: List[str]) -> Optional[str]:
     for bucket in browserbuckets:
-        if browser in bucket:
+        # Match only the watcher part of the ID (e.g. "aw-watcher-web-firefox"),
+        # not the hostname suffix, which may itself contain a browser name.
+        watcher = _base_bucket_id(bucket).split("_", 1)[0]
+        if browser in watcher:
             return bucket
     return None
 
