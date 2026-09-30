@@ -1,10 +1,12 @@
 import json
 from datetime import datetime, timezone
+from typing import Any, Dict
 
 from click.testing import CliRunner
 
 from aw_client import cli, queries
 from aw_client.classes import default_classes, get_classes
+from aw_client.queries import _bucket_hostname
 from aw_client.summary import build_summary, find_browser_buckets, format_summary
 
 START = datetime(2026, 8, 17, 9, tzinfo=timezone.utc)
@@ -88,6 +90,96 @@ def test_find_browser_buckets_includes_unattributed_buckets_when_opted_in():
     # Opting in must still never pull in a bucket attributed to another host.
     assert "chrome-desktop" not in find_browser_buckets(
         buckets, "laptop", include_legacy=True
+    )
+
+
+def test_find_browser_buckets_attributes_synced_buckets_to_their_origin_host():
+    buckets = {
+        "chrome-laptop": {
+            "id": "chrome-laptop",
+            "type": "web.tab.current",
+            "hostname": "laptop",
+        },
+        # aw-sync names the origin in the bucket ID suffix. This copy lost its
+        # hostname metadata, so only the suffix can attribute it.
+        "chrome-server-synced-from-laptop": {
+            "id": "chrome-server-synced-from-laptop",
+            "type": "web.tab.current",
+        },
+        "firefox-server-synced-from-desktop": {
+            "id": "firefox-server-synced-from-desktop",
+            "type": "web.tab.current",
+            "hostname": "unknown",
+        },
+    }
+
+    # A synced bucket belongs to the host it was synced FROM, so it is counted in
+    # that host's summary even though the bucket lives on the serving machine.
+    assert find_browser_buckets(buckets, "laptop") == [
+        "chrome-laptop",
+        "chrome-server-synced-from-laptop",
+    ]
+    assert find_browser_buckets(buckets, "desktop") == [
+        "firefox-server-synced-from-desktop"
+    ]
+    # And the serving machine must not inherit them, not even via the legacy
+    # opt-in: the suffix attributes them to a real host, so they are not
+    # unattributed buckets.
+    assert find_browser_buckets(buckets, "server", include_legacy=True) == []
+
+
+def test_find_browser_buckets_matches_the_shared_hostname_ladder():
+    """Alignment guard: attribution must agree with queries._bucket_hostname.
+
+    The ladder is the single source of truth for host attribution. This test
+    fails if ``find_browser_buckets`` drifts from it, so the two callers cannot
+    start disagreeing about which host a bucket belongs to.
+    """
+    shapes: Dict[str, Dict[str, Any]] = {
+        "hostname-only": {"hostname": "laptop"},
+        "data-hostname-only": {"data": {"hostname": "laptop"}},
+        "synced-no-metadata": {"id": "chrome-server-synced-from-laptop"},
+        "synced-unknown-metadata": {
+            "id": "firefox-server-synced-from-laptop",
+            "hostname": "unknown",
+        },
+        "unattributed": {"hostname": "unknown"},
+        "no-hostname-at-all": {},
+        "other-host": {"hostname": "desktop"},
+        "metadata-beats-suffix": {
+            "id": "brave-server-synced-from-laptop",
+            "hostname": "server",
+        },
+    }
+    buckets = {
+        name: {"id": bucket.get("id") or name, "type": "web.tab.current", **bucket}
+        for name, bucket in shapes.items()
+    }
+
+    for host in ("laptop", "server", "desktop"):
+        attributed = sorted(
+            bucket["id"]
+            for bucket in buckets.values()
+            if _bucket_hostname(bucket["id"], bucket) == host
+        )
+        assert find_browser_buckets(buckets, host) == sorted(set(attributed))
+
+        unattributed = sorted(
+            bucket["id"]
+            for bucket in buckets.values()
+            if _bucket_hostname(bucket["id"], bucket) is None
+        )
+        assert find_browser_buckets(buckets, host, include_legacy=True) == sorted(
+            set(attributed + unattributed)
+        )
+
+    # Precedence is inherited from the ladder, not decided here: when a synced
+    # bucket's metadata names the serving machine while its suffix names the
+    # origin, the metadata rung wins. Pinned so a change to that ordering is a
+    # deliberate one.
+    assert (
+        _bucket_hostname("brave-server-synced-from-laptop", {"hostname": "server"})
+        == "server"
     )
 
 

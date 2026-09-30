@@ -5,12 +5,9 @@ from typing import Any, Dict, Iterable, List
 
 from tabulate import tabulate
 
+from .queries import _bucket_hostname
+
 Summary = Dict[str, Any]
-
-
-# Hostname values that carry no usable attribution. Legacy watchers report these
-# instead of a real host, so such buckets cannot be assigned to any machine.
-_UNATTRIBUTED_HOSTNAMES = (None, "", "unknown")
 
 
 def find_browser_buckets(
@@ -18,7 +15,16 @@ def find_browser_buckets(
 ) -> List[str]:
     """Return browser bucket IDs for a host.
 
-    Buckets whose hostname metadata is missing or "unknown" cannot be attributed
+    Host attribution uses the same ladder as
+    :func:`aw_client.queries._bucket_hostname`: the bucket's ``hostname`` field,
+    then its ``data.hostname``, then the ``-synced-from-<host>`` suffix on the
+    bucket ID. That last rung matters here — aw-sync names the originating host
+    in the suffix, so a synced browser bucket belongs to the host it was synced
+    *from* rather than the machine serving it, and it is counted in that host's
+    summary even when its metadata carries no usable hostname.
+
+    Buckets the ladder cannot attribute to any host (no ``-synced-from-`` suffix
+    and a hostname that is missing, empty, or ``"unknown"``) cannot be assigned
     to a machine. On a server collecting from several machines they may belong to
     a different host, so folding them into this host's summary would leak another
     machine's browsing domains. They are excluded unless the caller opts in with
@@ -29,16 +35,16 @@ def find_browser_buckets(
         if bucket.get("type") != "web.tab.current":
             continue
 
-        data = bucket.get("data") or {}
-        bucket_hostname = bucket.get("hostname") or data.get("hostname")
+        bid = bucket.get("id") or bucket_id
+        bucket_hostname = _bucket_hostname(bid, bucket)
         if bucket_hostname == hostname:
             pass
-        elif include_legacy and bucket_hostname in _UNATTRIBUTED_HOSTNAMES:
+        elif include_legacy and bucket_hostname is None:
             pass
         else:
             continue
 
-        matches.append(bucket.get("id") or bucket_id)
+        matches.append(bid)
     return sorted(set(matches))
 
 
