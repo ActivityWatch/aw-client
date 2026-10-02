@@ -626,6 +626,11 @@ class RequestQueue(threading.Thread):
     # Events per bulk insert request.
     INSERT_CHUNK_SIZE = 100
 
+    # How many times to retry an unreadable pre-retry lookup before making
+    # progress without it. A permanently unreadable lookup must not block the
+    # rest of the queue behind one insert.
+    MAX_RECONCILE_FAILURES = 3
+
     def __init__(
         self,
         client: ActivityWatchClient,
@@ -681,6 +686,8 @@ class RequestQueue(threading.Thread):
         # Whether the current request is an insert that may already have
         # reached the server (it failed and is being retried).
         self._retrying_insert = False
+        # Consecutive unreadable pre-retry lookups for the current insert.
+        self._reconcile_failures = 0
         # The first batch after startup may have been (partly) delivered by a
         # previous run that crashed before acknowledging it.
         self._reconcile_inserts = True
@@ -849,27 +856,30 @@ class RequestQueue(threading.Thread):
         ]
         return [requests[0], *chunks, requests[-1]]
 
-    def _undelivered_or_defer(self, request: QueuedRequest) -> Optional[List[Any]]:
-        """Like _undelivered, but an unreadable lookup defers the insert.
+    def _undelivered_bounded(self, request: QueuedRequest) -> Optional[List[Any]]:
+        """Like _undelivered, but an unreadable lookup is tried a few times.
 
         The lookup is the only way to tell whether a retried insert was
-        already stored, so if it fails permanently neither answer is safe:
-        resending duplicates events the server already has, and dropping
-        loses events it never got. Return None to keep the request queued and
-        try the lookup again later. Connection errors and retryable statuses
-        still propagate, so the normal retry path handles them.
+        already stored. If it fails permanently, return None after
+        MAX_RECONCILE_FAILURES attempts so the caller can make progress
+        instead of blocking the queue forever. Connection errors and
+        retryable statuses still propagate, so the normal retry path handles
+        them.
         """
         try:
-            return self._undelivered(request)
+            undelivered = self._undelivered(request)
         except req.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status is None or status in self.RETRY_STATUS_CODES:
                 raise
+            self._reconcile_failures += 1
             logger.warning(
-                f"Could not check for already-stored events ({status}), "
-                "keeping the insert queued for a later retry"
+                f"Could not check for already-stored events ({status}), attempt "
+                f"{self._reconcile_failures}/{self.MAX_RECONCILE_FAILURES}"
             )
             return None
+        self._reconcile_failures = 0
+        return undelivered
 
     def _undelivered(self, request: QueuedRequest) -> List[Any]:
         """Drop the events of a retried insert that the server already stored.
@@ -910,14 +920,32 @@ class RequestQueue(threading.Thread):
         data = request.data
         try:
             if is_insert and (self._retrying_insert or self._reconcile_inserts):
-                reconciled = self._undelivered_or_defer(request)
-                if reconciled is None:
-                    # Unreadable lookup: we cannot tell whether this insert
-                    # was stored. Keep it queued and retry the lookup later
-                    # instead of duplicating or dropping the events.
+                reconciled = self._undelivered_bounded(request)
+                if reconciled is not None:
+                    data = reconciled
+                elif self._reconcile_failures < self.MAX_RECONCILE_FAILURES:
+                    # Unreadable lookup: we cannot tell whether this insert was
+                    # stored, so retry the lookup instead of guessing. Bounded,
+                    # so a permanently unreadable lookup cannot block the queue.
                     self.wait(RETRY_DELAY_DEFAULT)
                     return
-                data = reconciled
+                elif self._retrying_insert:
+                    # The insert was attempted and its response was lost, but
+                    # the lookup that would say whether it landed is unreadable.
+                    # Assume it did: resending would duplicate stored events,
+                    # and inserts are not idempotent.
+                    logger.error(
+                        "Could not check for already-stored events, dropping the "
+                        "retried insert (assumed delivered)"
+                    )
+                    data = []
+                else:
+                    # Nothing was attempted this run, so the server may never
+                    # have received these events. Send rather than discard them.
+                    logger.warning(
+                        "Could not check for already-stored events, sending the insert"
+                    )
+                    data = request.data
             # Any failure from here on may have happened after the server
             # stored the insert, so the retry must reconcile first.
             self._retrying_insert = is_insert
@@ -984,6 +1012,7 @@ class RequestQueue(threading.Thread):
         # Handled (delivered or dropped); advance. Acknowledge the batch only
         # once every request in it has been handled.
         self._retrying_insert = False
+        self._reconcile_failures = 0
         self._coalesced_index += 1
         if self._coalesced_index >= len(self._coalesced_batch):
             self._task_done()
