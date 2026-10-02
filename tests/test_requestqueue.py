@@ -8,7 +8,7 @@ with confidence, and I need some of that right now.
 """
 
 from time import sleep
-from logging import basicConfig, DEBUG
+from logging import basicConfig, DEBUG, WARNING
 
 basicConfig(level=DEBUG)
 
@@ -88,3 +88,20 @@ def test_register_bucket_marks_queue_disconnected_on_create_failure():
 
     assert rq.connected is False
     assert client.create_bucket_calls == [(("test-bucket", "test-type"), {})]
+
+
+def test_add_request_disk_full(caplog):
+    """Ensures that add_request doesn't crash if the queue can't be written to disk"""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+
+    def raise_oserror(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    rq._persistqueue.put = raise_oserror  # type: ignore
+
+    # Should not raise, the OSError should be caught internally and logged instead
+    with caplog.at_level(WARNING, logger="aw_client.client"):
+        rq.add_request("/api/0/buckets/test/heartbeat", {})
+
+    assert "Failed to queue request" in caplog.text
