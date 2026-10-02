@@ -2,6 +2,7 @@ import functools
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import warnings
@@ -441,6 +442,53 @@ def _retry_delay(response: req.Response) -> float:
     return max(RETRY_DELAY_DEFAULT, min(delay, RETRY_DELAY_MAX))
 
 
+# Matches the endpoint the queue stores heartbeats under, capturing the bucket
+# id and the pulsetime needed to merge consecutive queued heartbeats.
+_HEARTBEAT_ENDPOINT_RE = re.compile(
+    r"^buckets/(?P<bucket_id>.+)/heartbeat\?pulsetime=(?P<pulsetime>[0-9]+(?:\.[0-9]+)?)$"
+)
+
+
+def _parse_heartbeat_endpoint(endpoint: str) -> Optional[Tuple[str, float]]:
+    """Return (bucket_id, pulsetime) for a queued heartbeat endpoint, else None.
+
+    A malformed pulsetime must not raise: it just falls back to sending the
+    request verbatim, so one poisoned endpoint cannot wedge the queue.
+    """
+    match = _HEARTBEAT_ENDPOINT_RE.match(endpoint)
+    if match is None:
+        return None
+    try:
+        pulsetime = float(match.group("pulsetime"))
+    except ValueError:
+        return None
+    return match.group("bucket_id"), pulsetime
+
+
+def _is_insert_endpoint(endpoint: str) -> bool:
+    """Whether a queued request is a bulk insert created by coalescing."""
+    return endpoint.startswith("buckets/") and endpoint.endswith("/events")
+
+
+def _event_key(event: Event) -> Tuple[float, float, str]:
+    """Identity of an event for dedup, robust to server timestamp precision."""
+    return (
+        round(event.timestamp.timestamp(), 3),
+        round(event.duration.total_seconds(), 3),
+        json.dumps(event.data, sort_keys=True),
+    )
+
+
+def _try_event(data: Any) -> Optional[Event]:
+    """Parse a queued payload as an Event, or None if it is not one."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        return Event(**data)
+    except TypeError:
+        return None
+
+
 class RequestQueue(threading.Thread):
     """Used to asynchronously send heartbeats.
 
@@ -455,6 +503,22 @@ class RequestQueue(threading.Thread):
     # requests are kept in the queue and retried (dropped on anything else).
     # 503 in particular is sent by aw-server when the heartbeat lock times out.
     RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+    # How many queued requests to pop at once, so consecutive heartbeats for
+    # the same bucket can be merged before dispatch.
+    BATCH_SIZE = 1000
+
+    # Runs of at least this many merged events (that cannot merge with each
+    # other, e.g. changing window titles) bulk-insert their middle events
+    # instead of sending one heartbeat request each.
+    MIN_INSERT_RUN = 3
+    # Events per bulk insert request.
+    INSERT_CHUNK_SIZE = 100
+
+    # How many times to retry an unreadable pre-retry lookup before making
+    # progress without it. A permanently unreadable lookup must not block the
+    # rest of the queue behind one insert.
+    MAX_RECONCILE_FAILURES = 3
 
     def __init__(self, client: ActivityWatchClient) -> None:
         threading.Thread.__init__(self, daemon=True)
@@ -489,20 +553,57 @@ class RequestQueue(threading.Thread):
         self._persistqueue = persistqueue.FIFOSQLiteQueue(
             persistqueue_path, multithreading=True, auto_commit=False
         )
-        self._current = None  # type: Optional[QueuedRequest]
+        # The requests popped from the queue but not yet acknowledged. Held
+        # across dispatches so a transient error retries them instead of
+        # dropping them. A single task_done() deletes every row <= the cursor,
+        # i.e. the whole batch, so no per-item bookkeeping is needed.
+        self._current_batch = []  # type: List[QueuedRequest]
+        # `_current_batch` after coalescing, plus how many of those have been
+        # handled. Dispatching one coalesced request per call means a transient
+        # error retries only the failed request - never replays ones that
+        # already reached the server - and lets the run loop observe stop().
+        self._coalesced_batch = []  # type: List[QueuedRequest]
+        self._coalesced_index = 0
+        # Whether the current request is an insert that may already have
+        # reached the server (it failed and is being retried).
+        self._retrying_insert = False
+        # Consecutive unreadable pre-retry lookups for the current insert.
+        self._reconcile_failures = 0
+        # The first batch after startup may have been (partly) delivered by a
+        # previous run that crashed before acknowledging it.
+        self._reconcile_inserts = True
 
     def _get_next(self) -> Optional[QueuedRequest]:
-        # self._current will always hold the next not-yet-sent event,
-        # until self._task_done() is called.
-        if not self._current:
+        # Returns the head of the in-flight batch, otherwise pops a single
+        # request. Used by tests/callers that only need one item.
+        if not self._current_batch:
             try:
-                self._current = self._persistqueue.get(block=False)
+                self._current_batch = [self._persistqueue.get(block=False)]
             except persistqueue.exceptions.Empty:
                 return None
-        return self._current
+        return self._current_batch[0]
+
+    def _get_next_batch(self) -> List[QueuedRequest]:
+        # Pop up to BATCH_SIZE requests in one go so consecutive heartbeats
+        # for the same bucket can be merged before dispatch. The in-memory
+        # batch is only acknowledged (deleted) by _task_done(), so a crash
+        # mid-batch leaves every popped request on disk for the next run.
+        if self._current_batch:
+            return self._current_batch
+        batch = []  # type: List[QueuedRequest]
+        while len(batch) < self.BATCH_SIZE:
+            try:
+                batch.append(self._persistqueue.get(block=False))
+            except persistqueue.exceptions.Empty:
+                break
+        self._current_batch = batch
+        return batch
 
     def _task_done(self) -> None:
-        self._current = None
+        self._reconcile_inserts = False
+        self._current_batch = []
+        self._coalesced_batch = []
+        self._coalesced_index = 0
         self._persistqueue.task_done()
 
     def _create_buckets(self) -> None:
@@ -527,20 +628,193 @@ class RequestQueue(threading.Thread):
     def should_stop(self) -> bool:
         return self._stop_event.is_set()
 
+    def _coalesce(self, batch: List[QueuedRequest]) -> List[QueuedRequest]:
+        """Merge consecutive queued heartbeats for the same bucket.
+
+        When the server is unreachable the queue accumulates one heartbeat per
+        commit interval. Consecutive heartbeats for a bucket usually carry
+        identical data, so aw_transform.heartbeat_merge collapses them into a
+        handful of long events. Sending the merged events to the heartbeat
+        endpoint produces the same server-side result with far fewer requests.
+
+        Requests are grouped by bucket, not by full endpoint: grouping by
+        endpoint would reorder a bucket's heartbeats when their pulsetimes
+        differ. Within a bucket only a contiguous run sharing one endpoint is
+        merged, so the order of a bucket's requests is preserved exactly.
+        """
+        groups = {}  # type: Dict[str, List[QueuedRequest]]
+        for request in batch:
+            parsed = _parse_heartbeat_endpoint(request.endpoint)
+            key = parsed[0] if parsed is not None else request.endpoint
+            groups.setdefault(key, []).append(request)
+
+        coalesced = []  # type: List[QueuedRequest]
+
+        def flush(endpoint: Optional[str], merged: List[Event]) -> None:
+            if endpoint is not None:
+                coalesced.extend(self._split_run(endpoint, merged))
+
+        for requests in groups.values():
+            merged = []  # type: List[Event]
+            merged_endpoint = None  # type: Optional[str]
+            for request in requests:
+                parsed = _parse_heartbeat_endpoint(request.endpoint)
+                event = _try_event(request.data) if parsed is not None else None
+                if (
+                    parsed is None
+                    or event is None
+                    or request.endpoint != merged_endpoint
+                ):
+                    # Unknown endpoint shape, non-event payload, or a new
+                    # endpoint: close the current run and start a new one.
+                    flush(merged_endpoint, merged)
+                    merged = []
+                    merged_endpoint = None
+                if parsed is None or event is None:
+                    coalesced.append(request)
+                    continue
+                if merged:
+                    merged_event = heartbeat_merge(merged[-1], event, parsed[1])
+                    if merged_event is not None:
+                        merged[-1] = merged_event
+                        continue
+                # Not mergeable: a new event in the same run.
+                merged.append(event)
+                merged_endpoint = request.endpoint
+            flush(merged_endpoint, merged)
+        return coalesced
+
+    def _split_run(self, endpoint: str, merged: List[Event]) -> List[QueuedRequest]:
+        """Turn a run of merged heartbeats into requests, bulk-inserting the middle.
+
+        The first and last events always go to the heartbeat endpoint: the first
+        so it can still merge into the server's existing last event (no
+        fragmentation at batch boundaries), the last so the server's cached
+        "last heartbeat" ends up on the true last event. aw-server (Python) does
+        not invalidate that cache on insert, so a heartbeat merging into a stale
+        cached event would overwrite the inserted ones; that can only happen if
+        the gap between the first and last event is within pulsetime, so such
+        runs are sent as heartbeats only.
+        """
+        requests = [QueuedRequest(endpoint, e.to_json_dict()) for e in merged]
+        if len(merged) < self.MIN_INSERT_RUN:
+            return requests
+        parsed = _parse_heartbeat_endpoint(endpoint)
+        assert parsed is not None
+        bucket_id, pulsetime = parsed
+        first, last = merged[0], merged[-1]
+        gap = (last.timestamp - (first.timestamp + first.duration)).total_seconds()
+        if gap <= pulsetime:
+            return requests
+        insert_endpoint = f"buckets/{bucket_id}/events"
+        middle = [r.data for r in requests[1:-1]]
+        chunks = [
+            QueuedRequest(insert_endpoint, middle[i : i + self.INSERT_CHUNK_SIZE])
+            for i in range(0, len(middle), self.INSERT_CHUNK_SIZE)
+        ]
+        return [requests[0], *chunks, requests[-1]]
+
+    def _undelivered_bounded(self, request: QueuedRequest) -> Optional[List[Any]]:
+        """Like _undelivered, but an unreadable lookup is tried a few times.
+
+        The lookup is the only way to tell whether a retried insert was
+        already stored. If it fails permanently, return None after
+        MAX_RECONCILE_FAILURES attempts so the caller can make progress
+        instead of blocking the queue forever. Connection errors and
+        retryable statuses still propagate, so the normal retry path handles
+        them.
+        """
+        try:
+            undelivered = self._undelivered(request)
+        except req.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status is None or status in self.RETRY_STATUS_CODES:
+                raise
+            self._reconcile_failures += 1
+            logger.warning(
+                f"Could not check for already-stored events ({status}), attempt "
+                f"{self._reconcile_failures}/{self.MAX_RECONCILE_FAILURES}"
+            )
+            return None
+        self._reconcile_failures = 0
+        return undelivered
+
+    def _undelivered(self, request: QueuedRequest) -> List[Any]:
+        """Drop the events of a retried insert that the server already stored.
+
+        An insert is not idempotent: if it succeeded but the response was lost
+        (timeout, reset connection), a blind retry would duplicate it. So before
+        retrying, look up the chunk's time range and only resend what is missing.
+        """
+        bucket_id = request.endpoint[len("buckets/") : -len("/events")]
+        events = [Event(**d) for d in request.data]
+        stored = self.client.get_events(
+            bucket_id,
+            limit=-1,
+            start=min(e.timestamp for e in events),
+            end=max(e.timestamp + e.duration for e in events),
+        )
+        seen = {_event_key(e) for e in stored}
+        return [d for d, e in zip(request.data, events) if _event_key(e) not in seen]
+
     def _dispatch_request(self) -> None:
-        request = self._get_next()
-        if not request:
+        batch = self._get_next_batch()
+        if not batch:
             self.wait(0.2)  # seconds to wait before re-polling the empty queue
             return
 
+        if not self._coalesced_batch:
+            self._coalesced_batch = self._coalesce(batch)
+            if not self._coalesced_batch:
+                self._task_done()
+                return
+
+        # Dispatch one coalesced request per call: a transient error then
+        # retries only the failed request (never replays ones that already
+        # reached the server), and the run loop can observe stop() between
+        # requests instead of blocking on a long batch.
+        request = self._coalesced_batch[self._coalesced_index]
+        is_insert = _is_insert_endpoint(request.endpoint)
+        data = request.data
         try:
-            self.client._post(request.endpoint, request.data)
+            if is_insert and (self._retrying_insert or self._reconcile_inserts):
+                reconciled = self._undelivered_bounded(request)
+                if reconciled is not None:
+                    data = reconciled
+                elif self._reconcile_failures < self.MAX_RECONCILE_FAILURES:
+                    # Unreadable lookup: we cannot tell whether this insert was
+                    # stored, so retry the lookup instead of guessing. Bounded,
+                    # so a permanently unreadable lookup cannot block the queue.
+                    self.wait(RETRY_DELAY_DEFAULT)
+                    return
+                elif self._retrying_insert:
+                    # The insert was attempted and its response was lost, but
+                    # the lookup that would say whether it landed is unreadable.
+                    # Assume it did: resending would duplicate stored events,
+                    # and inserts are not idempotent.
+                    logger.error(
+                        "Could not check for already-stored events, dropping the "
+                        "retried insert (assumed delivered)"
+                    )
+                    data = []
+                else:
+                    # Nothing was attempted this run, so the server may never
+                    # have received these events. Send rather than discard them.
+                    logger.warning(
+                        "Could not check for already-stored events, sending the insert"
+                    )
+                    data = request.data
+            # Any failure from here on may have happened after the server
+            # stored the insert, so the retry must reconcile first.
+            self._retrying_insert = is_insert
+            if data:
+                self.client._post(request.endpoint, data)
         except (req.exceptions.ConnectionError, req.exceptions.Timeout):
             # Triggered by:
             #   - server not running (connection refused)
             #   - server not responding (timeout)
-            # Keep the request in the queue and go back to waiting for the
-            # server to become available (the run loop reconnects).
+            # Keep the batch in memory and go back to waiting for the server
+            # to become available (the run loop reconnects).
             self.connected = False
             logger.warning(
                 "Connection refused or timeout, will queue requests until connection is available."
@@ -559,9 +833,9 @@ class RequestQueue(threading.Thread):
             if response is not None and status_code in self.RETRY_STATUS_CODES:
                 # Transient server-side problem (busy, overloaded, restarting
                 # or behind a flaky proxy) - the request itself is likely
-                # fine, so keep it in the queue and retry. Heartbeats are safe
-                # to replay: a duplicate of an already-processed heartbeat
-                # merges into the last event as a no-op.
+                # fine, so retry it. Heartbeats are safe to replay: a
+                # duplicate of an already-processed heartbeat merges into the
+                # last event as a no-op.
                 delay = _retry_delay(response)
                 logger.warning(
                     f"Server error {status_code}, will retry in {delay}s: {request.endpoint}"
@@ -569,19 +843,37 @@ class RequestQueue(threading.Thread):
                 # stop-aware wait, so a long Retry-After can't block shutdown
                 self.wait(delay)
                 return
+            elif is_insert and len(data) > 1:
+                # One bad event must not drop the whole chunk: resend it one
+                # event per request, so only the rejected event is dropped.
+                # A 4xx means nothing was stored, and `data` is already
+                # reconciled, so the single-event inserts need no lookup.
+                logger.warning(
+                    f"Bulk insert failed ({status_code}), retrying event by event"
+                )
+                self._coalesced_batch[
+                    self._coalesced_index : self._coalesced_index + 1
+                ] = [QueuedRequest(request.endpoint, [d]) for d in data]
+                self._retrying_insert = False
+                return
             else:
                 # Client errors (e.g. HTTP 400 - bad request, see
                 # https://github.com/ActivityWatch/activitywatch/issues/815)
-                # are likely to fail forever, so drop the request instead of
-                # blocking the queue.
+                # are likely to fail forever, so drop this request and move on
+                # to the next one.
                 logger.error(
                     f"Request failed ({status_code}), not retrying: {request.data}"
                 )
         except Exception:
             logger.exception(f"Unknown error, not retrying: {request.data}")
 
-        # Mark the request as done
-        self._task_done()
+        # Handled (delivered or dropped); advance. Acknowledge the batch only
+        # once every request in it has been handled.
+        self._retrying_insert = False
+        self._reconcile_failures = 0
+        self._coalesced_index += 1
+        if self._coalesced_index >= len(self._coalesced_batch):
+            self._task_done()
 
     def run(self) -> None:
         self._stop_event.clear()
