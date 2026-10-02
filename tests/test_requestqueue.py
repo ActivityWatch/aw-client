@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+from datetime import datetime, timedelta, timezone
 from time import sleep
 from logging import basicConfig, DEBUG
 
@@ -16,6 +17,16 @@ import pytest
 import requests
 
 from aw_client.client import RequestQueue
+
+_BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _heartbeat(offset_s, duration_s=10.0, data=None):
+    return {
+        "timestamp": (_BASE + timedelta(seconds=offset_s)).isoformat(),
+        "duration": duration_s,
+        "data": {"status": "not-afk"} if data is None else data,
+    }
 
 
 class MockClient:
@@ -121,6 +132,12 @@ def _fresh_queue(client) -> RequestQueue:
     return rq
 
 
+def _drain(rq) -> None:
+    """Dispatch until the queue is empty (only for clients that succeed)."""
+    while rq._get_next_batch():
+        rq._dispatch_request()
+
+
 @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
 def test_dispatch_retries_transient_server_errors(status_code):
     """
@@ -195,3 +212,246 @@ def test_retry_delay_honors_retry_after():
     assert _retry_delay(resp("0")) == RETRY_DELAY_DEFAULT  # floored
     # HTTP-date form is not parsed, falls back to default
     assert _retry_delay(resp("Wed, 21 Oct 2026 07:28:00 GMT")) == RETRY_DELAY_DEFAULT
+
+
+class RecordingClient(MockClient):
+    """Client that records every (endpoint, data) posted to it."""
+
+    def __init__(self):
+        super().__init__()
+        self.posts = []
+        self.post_calls = 0
+
+    def _post(self, endpoint, data, **kwargs):
+        self.posts.append((endpoint, data))
+        self.post_calls += 1
+        return requests.Response()
+
+
+def test_dispatch_merges_consecutive_queued_heartbeats():
+    """
+    A long offline backlog of heartbeats for one bucket must collapse into a
+    handful of requests instead of one per heartbeat, without losing data
+    (issue #32 / #7).
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 200
+    for i in range(n):
+        rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(i * 10))
+
+    rq._dispatch_request()
+
+    assert client.post_calls == 1, (
+        "mergeable heartbeats should collapse into one request"
+    )
+    assert rq._get_next() is None, "the queue should be fully drained"
+    endpoint, data = client.posts[0]
+    assert endpoint == "buckets/test/heartbeat?pulsetime=10"
+    # No data loss: the merged event spans the whole queued range.
+    assert data["duration"] == pytest.approx(n * 10)
+    assert data["data"] == {"status": "not-afk"}
+
+
+def test_dispatch_does_not_merge_heartbeats_with_different_data():
+    """Heartbeats whose data differs must each be sent, in order."""
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    for i in range(5):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    _drain(rq)
+
+    assert client.post_calls == 5
+    assert [d["data"]["title"] for _, d in client.posts] == [
+        f"window-{i}" for i in range(5)
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_batches_across_buckets():
+    """Interleaved buckets are grouped, so each bucket drains in one request."""
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    for i in range(50):
+        rq.add_request("buckets/afk/heartbeat?pulsetime=10", _heartbeat(i * 10))
+        rq.add_request(
+            "buckets/window/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": "same"}),
+        )
+
+    _drain(rq)
+
+    assert client.post_calls == 2
+    assert sorted(endpoint for endpoint, _ in client.posts) == [
+        "buckets/afk/heartbeat?pulsetime=10",
+        "buckets/window/heartbeat?pulsetime=10",
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_retry_keeps_whole_batch_then_merges():
+    """A transient error retains the whole batch; the retry merges it."""
+    client = FlakyClient(_http_error(503))
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 50
+    for i in range(n):
+        rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(i * 10))
+
+    rq._dispatch_request()
+
+    assert client.post_calls == 1
+    assert rq._get_next() is not None  # batch retained
+
+    client.exc = None  # server recovered
+    rq._dispatch_request()
+
+    assert client.post_calls == 2  # one merged request on retry
+    assert rq._get_next() is None
+
+
+def test_dispatch_drops_bad_request_but_keeps_the_rest():
+    """
+    A non-retryable error (HTTP 400) drops only that request; the rest of the
+    batch must still be dispatched and the queue fully drained.
+    """
+
+    class SelectiveFailClient(RecordingClient):
+        def _post(self, endpoint, data, **kwargs):
+            self.post_calls += 1
+            if "bad" in endpoint:
+                raise _http_error(400)
+            self.posts.append((endpoint, data))
+            return requests.Response()
+
+    client = SelectiveFailClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    rq.add_request("buckets/bad/heartbeat?pulsetime=10", _heartbeat(0))
+    rq.add_request("buckets/good/heartbeat?pulsetime=10", _heartbeat(0, data={"k": 1}))
+
+    _drain(rq)
+
+    assert client.post_calls == 2
+    assert [endpoint for endpoint, _ in client.posts] == [
+        "buckets/good/heartbeat?pulsetime=10"
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_drains_10k_heartbeats_in_batches():
+    """
+    A large offline backlog (10k mergeable heartbeats) must drain with one
+    request per batch, quickly and without losing data.
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10_000
+    for i in range(n):
+        rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(i * 10))
+
+    while rq._get_next_batch():
+        rq._dispatch_request()
+
+    # Every batch merges to a single heartbeat request.
+    assert client.post_calls == n // rq.BATCH_SIZE
+    assert rq._get_next() is None
+    # No data loss: the merged events across all batches still cover the whole
+    # queued range, not just the first request.
+    total = sum(data["duration"] for _, data in client.posts)
+    assert total == pytest.approx(n * 10)
+    assert all(data["data"] == {"status": "not-afk"} for _, data in client.posts)
+
+
+def test_dispatch_preserves_order_when_pulsetimes_differ():
+    """
+    Heartbeats for one bucket with different pulsetimes must not be reordered
+    (grouping by endpoint alone would merge/reorder across the intervening
+    one and change the server-side timeline).
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(0))
+    rq.add_request("buckets/test/heartbeat?pulsetime=20", _heartbeat(10))
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(20))
+
+    _drain(rq)
+
+    assert [endpoint for endpoint, _ in client.posts] == [
+        "buckets/test/heartbeat?pulsetime=10",
+        "buckets/test/heartbeat?pulsetime=20",
+        "buckets/test/heartbeat?pulsetime=10",
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_handles_malformed_pulsetime_without_crashing():
+    """A malformed pulsetime must not raise inside coalescing: the request is
+    sent verbatim and the rest of the queue still drains."""
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    rq.add_request("buckets/test/heartbeat?pulsetime=1..2", _heartbeat(0))
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(0, data={"k": 1}))
+
+    _drain(rq)
+
+    assert client.post_calls == 2
+    assert rq._get_next() is None
+
+
+def test_partial_retry_does_not_replay_delivered_requests():
+    """
+    If an earlier request in a batch is delivered and a later one hits a
+    transient error, the retry must resume at the failed request instead of
+    replaying the whole batch.
+    """
+
+    class FailSecondClient(RecordingClient):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def _post(self, endpoint, data, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                raise _http_error(503)
+            return super()._post(endpoint, data, **kwargs)
+
+    client = FailSecondClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    # Different data, so these are two separate (non-mergeable) requests.
+    rq.add_request(
+        "buckets/test/heartbeat?pulsetime=10", _heartbeat(0, data={"title": "a"})
+    )
+    rq.add_request(
+        "buckets/test/heartbeat?pulsetime=10", _heartbeat(10, data={"title": "b"})
+    )
+
+    rq._dispatch_request()  # a -> delivered
+    rq._dispatch_request()  # b -> 503, stays
+    rq._dispatch_request()  # b -> delivered
+
+    assert client.calls == 3, "the failed request should be retried, not the batch"
+    assert client.post_calls == 2
+    assert [d["data"]["title"] for _, d in client.posts] == ["a", "b"]
+    assert rq._get_next() is None
