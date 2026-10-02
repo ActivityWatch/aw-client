@@ -90,13 +90,10 @@ def test_register_bucket_marks_queue_disconnected_on_create_failure():
     assert client.create_bucket_calls == [(("test-bucket", "test-type"), {})]
 
 
-
-
-
 def test_wait_for_queue_empty_basic():
     """Queue empties normally while connected and running."""
     client = MockClient()
-    rq = RequestQueue(client) # type: ignore
+    rq = RequestQueue(client)  # type: ignore
     rq.start()
 
     rq.add_request("/api/0/buckets/test/heartbeat", {})
@@ -110,7 +107,7 @@ def test_wait_for_queue_empty_basic():
 def test_wait_for_queue_empty_not_running():
     """Returns True immediately if the queue thread isn't running."""
     client = MockClient()
-    rq = RequestQueue(client) # type: ignore
+    rq = RequestQueue(client)  # type: ignore
     # Thread never started, should return True instantly
     result = rq.wait_for_queue_empty(timeout=5)
     assert result is True
@@ -121,11 +118,12 @@ def test_wait_for_queue_empty_timeout():
     import unittest.mock as mock
 
     client = MockClient()
-    rq = RequestQueue(client) # type: ignore
+    rq = RequestQueue(client)  # type: ignore
 
     # Make _post block long enough that the queue won't empty before timeout
     def slow_post(endpoint, data):
         from time import sleep
+
         sleep(10)
 
     with mock.patch.object(client, "_post", slow_post):

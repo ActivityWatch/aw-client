@@ -568,7 +568,10 @@ class RequestQueue(threading.Thread):
 
         start_time = datetime.now()
         while self._persistqueue.qsize() > 0 or self._current is not None:
-            if timeout is not None and (datetime.now() - start_time).total_seconds() >= timeout:
+            if (
+                timeout is not None
+                and (datetime.now() - start_time).total_seconds() >= timeout
+            ):
                 return False
             if self.wait(0.1):
                 # stop() was called while waiting
