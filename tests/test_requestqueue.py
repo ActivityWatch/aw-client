@@ -727,3 +727,56 @@ def test_failed_reconcile_read_does_not_drop_an_undelivered_insert():
         f"window-{i}" for i in range(n)
     ]
     assert rq._get_next() is None
+
+
+def test_permanently_unreadable_lookup_does_not_block_the_queue():
+    """A lookup that never recovers must not stall the queue forever. A retried
+    insert (attempted, response lost) is assumed delivered: no duplicate, and
+    the last heartbeat still goes out."""
+    client = _ToggleReadDenied()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    rq._dispatch_request()  # first event, heartbeat
+    client.fail_insert_after_store = requests.exceptions.Timeout()
+    rq._dispatch_request()  # insert stored, response lost -> retried
+    client.deny_reads = True
+
+    _drain(rq)  # bounded deferral, then assumed delivered
+
+    assert [e.data["title"] for e in client.stored] == [
+        f"window-{i}" for i in range(n)
+    ], "the already-stored chunk must not be duplicated"
+    assert rq._get_next() is None, "the queue must drain despite the dead lookup"
+
+
+def test_permanently_unreadable_lookup_still_sends_a_never_attempted_insert():
+    """If no insert was attempted this run, an unreadable lookup must not
+    discard the chunk: after the bounded retries it is sent, and the queue
+    drains."""
+    client = _ToggleReadDenied()
+    client.deny_reads = True
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    rq._dispatch_request()  # first event, heartbeat
+    _drain(rq)  # insert never attempted -> sent despite the unreadable lookup
+
+    assert [e.data["title"] for e in client.stored] == [
+        f"window-{i}" for i in range(n)
+    ]
+    assert rq._get_next() is None
