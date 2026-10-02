@@ -750,14 +750,21 @@ def test_rejected_insert_chunk_only_drops_the_bad_event():
     assert rq._get_next() is None
 
 
-def test_failed_reconcile_read_still_sends_the_chunk():
-    """If the pre-retry lookup is rejected, send the chunk rather than drop it."""
+class _ToggleReadDenied(StoringClient):
+    """StoringClient whose pre-retry lookup can be made to fail."""
 
-    class ReadDenied(StoringClient):
-        def get_events(self, *args, **kwargs):
+    deny_reads = False
+
+    def get_events(self, *args, **kwargs):
+        if self.deny_reads:
             raise _http_error(403)
+        return super().get_events(*args, **kwargs)
 
-    client = ReadDenied()
+
+def test_failed_reconcile_read_does_not_duplicate_a_delivered_insert():
+    """An unreadable pre-retry lookup must not blind-resend a chunk that may
+    already be stored. Keep the request queued and reconcile on a later try."""
+    client = _ToggleReadDenied()
     rq = _fresh_queue(client)
     rq.connected = True
 
@@ -768,7 +775,58 @@ def test_failed_reconcile_read_still_sends_the_chunk():
             _heartbeat(i * 10, data={"title": f"window-{i}"}),
         )
 
-    _drain(rq)  # first batch after startup -> reconciles -> read denied
+    rq._dispatch_request()  # first event, heartbeat
+    client.fail_insert_after_store = requests.exceptions.Timeout()
+    rq._dispatch_request()  # reconcile (empty) -> insert stored, response lost
+    client.deny_reads = True
+    rq._dispatch_request()  # lookup denied -> defer, must not resend
 
-    assert [e.data["title"] for e in client.stored] == [f"window-{i}" for i in range(n)]
+    assert [e.data["title"] for e in client.stored] == [
+        f"window-{i}" for i in range(n - 1)
+    ], "the already-stored chunk must not be duplicated"
+    assert rq._get_next() is not None, "the chunk must stay queued"
+
+    client.deny_reads = False
+    _drain(rq)
+
+    assert [e.data["title"] for e in client.stored] == [
+        f"window-{i}" for i in range(n)
+    ]
+    assert rq._get_next() is None
+
+
+def test_failed_reconcile_read_does_not_drop_an_undelivered_insert():
+    """An unreadable pre-retry lookup must not discard events that were never
+    stored either: defer the chunk until the lookup succeeds."""
+    client = _ToggleReadDenied()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    rq._dispatch_request()  # first event, heartbeat
+    real_post = client._post
+
+    def refuse(endpoint, data, **kwargs):
+        raise requests.exceptions.ConnectionError()
+
+    client._post = refuse
+    rq._dispatch_request()  # insert never reaches the server
+    client._post = real_post
+
+    client.deny_reads = True
+    rq._dispatch_request()  # lookup denied -> defer, must not drop
+    assert rq._get_next() is not None, "the chunk must stay queued"
+
+    client.deny_reads = False
+    _drain(rq)
+
+    assert [e.data["title"] for e in client.stored] == [
+        f"window-{i}" for i in range(n)
+    ]
     assert rq._get_next() is None

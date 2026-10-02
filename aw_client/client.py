@@ -849,12 +849,15 @@ class RequestQueue(threading.Thread):
         ]
         return [requests[0], *chunks, requests[-1]]
 
-    def _undelivered_or_all(self, request: QueuedRequest) -> List[Any]:
-        """Like _undelivered, but a permanent read failure sends the whole chunk.
+    def _undelivered_or_defer(self, request: QueuedRequest) -> Optional[List[Any]]:
+        """Like _undelivered, but an unreadable lookup defers the insert.
 
-        A possible duplicate is better than dropping events that were never
-        sent. Connection errors and retryable statuses still propagate, so the
-        chunk is retried (and reconciled) later.
+        The lookup is the only way to tell whether a retried insert was
+        already stored, so if it fails permanently neither answer is safe:
+        resending duplicates events the server already has, and dropping
+        loses events it never got. Return None to keep the request queued and
+        try the lookup again later. Connection errors and retryable statuses
+        still propagate, so the normal retry path handles them.
         """
         try:
             return self._undelivered(request)
@@ -863,9 +866,10 @@ class RequestQueue(threading.Thread):
             if status is None or status in self.RETRY_STATUS_CODES:
                 raise
             logger.warning(
-                f"Could not check for already-stored events ({status}), sending the chunk anyway"
+                f"Could not check for already-stored events ({status}), "
+                "keeping the insert queued for a later retry"
             )
-            return request.data
+            return None
 
     def _undelivered(self, request: QueuedRequest) -> List[Any]:
         """Drop the events of a retried insert that the server already stored.
@@ -906,7 +910,14 @@ class RequestQueue(threading.Thread):
         data = request.data
         try:
             if is_insert and (self._retrying_insert or self._reconcile_inserts):
-                data = self._undelivered_or_all(request)
+                reconciled = self._undelivered_or_defer(request)
+                if reconciled is None:
+                    # Unreadable lookup: we cannot tell whether this insert
+                    # was stored. Keep it queued and retry the lookup later
+                    # instead of duplicating or dropping the events.
+                    self.wait(RETRY_DELAY_DEFAULT)
+                    return
+                data = reconciled
             # Any failure from here on may have happened after the server
             # stored the insert, so the retry must reconcile first.
             self._retrying_insert = is_insert
