@@ -624,7 +624,9 @@ class RequestQueue(threading.Thread):
         try:
             self._persistqueue.put(QueuedRequest(endpoint, data))
         except OSError as e:
-            logger.warning(f"Failed to queue request, possibly due to insufficient disk space: {e}")
+            logger.warning(
+                f"Failed to queue request, possibly due to insufficient disk space: {e}"
+            )
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)
