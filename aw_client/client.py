@@ -707,6 +707,24 @@ class RequestQueue(threading.Thread):
         ]
         return [requests[0], *chunks, requests[-1]]
 
+    def _undelivered_or_all(self, request: QueuedRequest) -> List[Any]:
+        """Like _undelivered, but a permanent read failure sends the whole chunk.
+
+        A possible duplicate is better than dropping events that were never
+        sent. Connection errors and retryable statuses still propagate, so the
+        chunk is retried (and reconciled) later.
+        """
+        try:
+            return self._undelivered(request)
+        except req.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status is None or status in self.RETRY_STATUS_CODES:
+                raise
+            logger.warning(
+                f"Could not check for already-stored events ({status}), sending the chunk anyway"
+            )
+            return request.data
+
     def _undelivered(self, request: QueuedRequest) -> List[Any]:
         """Drop the events of a retried insert that the server already stored.
 
@@ -743,10 +761,10 @@ class RequestQueue(threading.Thread):
         # requests instead of blocking on a long batch.
         request = self._coalesced_batch[self._coalesced_index]
         is_insert = _is_insert_endpoint(request.endpoint)
+        data = request.data
         try:
-            data = request.data
             if is_insert and (self._retrying_insert or self._reconcile_inserts):
-                data = self._undelivered(request)
+                data = self._undelivered_or_all(request)
             # Any failure from here on may have happened after the server
             # stored the insert, so the retry must reconcile first.
             self._retrying_insert = is_insert
@@ -785,6 +803,19 @@ class RequestQueue(threading.Thread):
                 )
                 # stop-aware wait, so a long Retry-After can't block shutdown
                 self.wait(delay)
+                return
+            elif is_insert and len(data) > 1:
+                # One bad event must not drop the whole chunk: resend it one
+                # event per request, so only the rejected event is dropped.
+                # A 4xx means nothing was stored, and `data` is already
+                # reconciled, so the single-event inserts need no lookup.
+                logger.warning(
+                    f"Bulk insert failed ({status_code}), retrying event by event"
+                )
+                self._coalesced_batch[
+                    self._coalesced_index : self._coalesced_index + 1
+                ] = [QueuedRequest(request.endpoint, [d]) for d in data]
+                self._retrying_insert = False
                 return
             else:
                 # Client errors (e.g. HTTP 400 - bad request, see

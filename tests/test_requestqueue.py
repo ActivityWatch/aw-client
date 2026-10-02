@@ -615,3 +615,57 @@ def test_partial_retry_does_not_replay_delivered_requests():
     assert client.post_calls == 2
     assert [d["data"]["title"] for _, d in client.posts] == ["a", "b"]
     assert rq._get_next() is None
+
+
+def test_rejected_insert_chunk_only_drops_the_bad_event():
+    """A 400 on a bulk insert must not drop the valid events in the chunk."""
+
+    class RejectsBadEvent(StoringClient):
+        def _post(self, endpoint, data, **kwargs):
+            if endpoint.endswith("/events") and any(
+                d["data"]["title"] == "bad" for d in data
+            ):
+                self.post_calls += 1
+                raise _http_error(400)
+            return super()._post(endpoint, data, **kwargs)
+
+    client = RejectsBadEvent()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    titles = [f"window-{i}" for i in range(10)]
+    titles[5] = "bad"
+    for i, title in enumerate(titles):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": title}),
+        )
+
+    _drain(rq)
+
+    assert [e.data["title"] for e in client.stored] == [t for t in titles if t != "bad"]
+    assert rq._get_next() is None
+
+
+def test_failed_reconcile_read_still_sends_the_chunk():
+    """If the pre-retry lookup is rejected, send the chunk rather than drop it."""
+
+    class ReadDenied(StoringClient):
+        def get_events(self, *args, **kwargs):
+            raise _http_error(403)
+
+    client = ReadDenied()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    _drain(rq)  # first batch after startup -> reconciles -> read denied
+
+    assert [e.data["title"] for e in client.stored] == [f"window-{i}" for i in range(n)]
+    assert rq._get_next() is None
