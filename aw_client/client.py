@@ -1,4 +1,5 @@
 import functools
+import ipaddress
 import json
 import logging
 import os
@@ -47,6 +48,22 @@ def _log_request_exception(e: req.RequestException):
         logger.warning(f"Error message received: {d}")
     except json.JSONDecodeError:
         pass
+
+
+# Explicit None entries override proxies from the environment (HTTP_PROXY,
+# HTTPS_PROXY, ALL_PROXY) for a single request, see requests' merge_setting.
+_NO_PROXIES: Dict[str, Any] = {"http": None, "https": None, "all": None}
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True if ``host`` names the local machine (localhost, 127.0.0.0/8, ::1)."""
+    host = str(host).strip("[]").rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _dt_is_tzaware(dt: datetime) -> bool:
@@ -126,6 +143,10 @@ class ActivityWatchClient:
             str(server_host), server_port, profile=resolved
         )
         self.server_address = f"{protocol}://{server_host}:{server_port}"
+        # A local server must never be reached through a system proxy: NO_PROXY
+        # often lists "localhost" but not "127.0.0.1", which sends every request
+        # to the proxy and fails (#41). Remote servers keep honoring the env.
+        self._proxies = _NO_PROXIES if _is_loopback_host(server_host) else None
 
         self.instance = SingleInstance(
             f"{self.client_name}-at-{server_host}-on-{server_port}"
@@ -153,7 +174,12 @@ class ActivityWatchClient:
 
     @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
-        return req.get(self._url(endpoint), params=params, headers=self._headers())
+        return req.get(
+            self._url(endpoint),
+            params=params,
+            headers=self._headers(),
+            proxies=self._proxies,
+        )
 
     @always_raise_for_request_errors
     def _post(
@@ -170,6 +196,7 @@ class ActivityWatchClient:
             data=bytes(json.dumps(data), "utf8"),
             headers=headers,
             params=params,
+            proxies=self._proxies,
         )
 
     @always_raise_for_request_errors
@@ -177,7 +204,12 @@ class ActivityWatchClient:
         if data is None:
             data = {}
         headers = self._headers({"Content-type": "application/json"})
-        return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
+        return req.delete(
+            self._url(endpoint),
+            data=json.dumps(data),
+            headers=headers,
+            proxies=self._proxies,
+        )
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""

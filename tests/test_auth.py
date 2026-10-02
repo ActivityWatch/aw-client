@@ -69,7 +69,7 @@ def test_client_sends_authorization_header_for_local_server(tmp_path, monkeypatc
 
     captured = {}
 
-    def fake_get(url, params=None, headers=None):
+    def fake_get(url, params=None, headers=None, **kwargs):
         captured["url"] = url
         captured["headers"] = headers
         return DummyResponse({"hostname": "test-host", "testing": False})
@@ -93,7 +93,7 @@ def test_client_skips_authorization_header_for_remote_server(tmp_path, monkeypat
 
     captured = {}
 
-    def fake_get(url, params=None, headers=None):
+    def fake_get(url, params=None, headers=None, **kwargs):
         captured["headers"] = headers
         return DummyResponse({"hostname": "remote-host", "testing": False})
 
