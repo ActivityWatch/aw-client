@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import threading
 from time import sleep
 from logging import basicConfig, DEBUG
 
@@ -113,6 +114,16 @@ def test_wait_for_queue_empty_not_running():
     assert result is True
 
 
+def test_wait_for_queue_empty_pending_not_running():
+    """Returns False when requests are pending but the thread isn't running."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    # Nothing can flush this request: the thread was never started.
+    rq.add_request("/api/0/buckets/test/heartbeat", {})
+    result = rq.wait_for_queue_empty(timeout=5)
+    assert result is False
+
+
 def test_wait_for_queue_empty_timeout():
     """Returns False if the queue doesn't empty before the timeout."""
     import unittest.mock as mock
@@ -120,17 +131,21 @@ def test_wait_for_queue_empty_timeout():
     client = MockClient()
     rq = RequestQueue(client)  # type: ignore
 
-    # Make _post block long enough that the queue won't empty before timeout
-    def slow_post(endpoint, data):
-        from time import sleep
+    # Block _post until the test releases it, so the queue can't empty before
+    # the timeout without adding a multi-second sleep to every run.
+    release = threading.Event()
 
-        sleep(10)
+    def slow_post(endpoint, data):
+        release.wait(10)
 
     with mock.patch.object(client, "_post", slow_post):
         rq.start()
         rq.add_request("/api/0/buckets/test/heartbeat", {})
-        result = rq.wait_for_queue_empty(timeout=0.5)
-        rq.stop()
-        rq.join()
+        try:
+            result = rq.wait_for_queue_empty(timeout=0.5)
+        finally:
+            release.set()
+            rq.stop()
+            rq.join()
 
     assert result is False

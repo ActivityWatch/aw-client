@@ -7,7 +7,7 @@ import threading
 import warnings
 from collections import namedtuple
 from datetime import datetime
-from time import sleep
+from time import monotonic, sleep
 from typing import (
     Any,
     Callable,
@@ -558,20 +558,20 @@ class RequestQueue(threading.Thread):
     def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
         """
         Wait until the queue is empty, or until timeout (in seconds) is reached.
-        Returns instantly (True) if the queue thread isn't running.
+
+        If the queue thread isn't running nothing can be flushed, so only return
+        True when the queue is genuinely empty; requests still pending (e.g. queued
+        before connect()) return False.
 
         :param timeout: max time to wait, in seconds. Waits indefinitely if None.
         :return: True if the queue became empty, False if the timeout was reached.
         """
         if not self.is_alive():
-            return True
+            return self._persistqueue.qsize() == 0 and self._current is None
 
-        start_time = datetime.now()
+        start_time = monotonic()
         while self._persistqueue.qsize() > 0 or self._current is not None:
-            if (
-                timeout is not None
-                and (datetime.now() - start_time).total_seconds() >= timeout
-            ):
+            if timeout is not None and monotonic() - start_time >= timeout:
                 return False
             if self.wait(0.1):
                 # stop() was called while waiting
