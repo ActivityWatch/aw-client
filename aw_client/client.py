@@ -445,8 +445,24 @@ def _retry_delay(response: req.Response) -> float:
 # Matches the endpoint the queue stores heartbeats under, capturing the bucket
 # id and the pulsetime needed to merge consecutive queued heartbeats.
 _HEARTBEAT_ENDPOINT_RE = re.compile(
-    r"^buckets/(?P<bucket_id>.+)/heartbeat\?pulsetime=(?P<pulsetime>[0-9.]+)$"
+    r"^buckets/(?P<bucket_id>.+)/heartbeat\?pulsetime=(?P<pulsetime>[0-9]+(?:\.[0-9]+)?)$"
 )
+
+
+def _parse_heartbeat_endpoint(endpoint: str) -> Optional[Tuple[str, float]]:
+    """Return (bucket_id, pulsetime) for a queued heartbeat endpoint, else None.
+
+    A malformed pulsetime must not raise: it just falls back to sending the
+    request verbatim, so one poisoned endpoint cannot wedge the queue.
+    """
+    match = _HEARTBEAT_ENDPOINT_RE.match(endpoint)
+    if match is None:
+        return None
+    try:
+        pulsetime = float(match.group("pulsetime"))
+    except ValueError:
+        return None
+    return match.group("bucket_id"), pulsetime
 
 
 def _try_event(data: Any) -> Optional[Event]:
@@ -516,6 +532,12 @@ class RequestQueue(threading.Thread):
         # dropping them. A single task_done() deletes every row <= the cursor,
         # i.e. the whole batch, so no per-item bookkeeping is needed.
         self._current_batch = []  # type: List[QueuedRequest]
+        # `_current_batch` after coalescing, plus how many of those have been
+        # handled. Dispatching one coalesced request per call means a transient
+        # error retries only the failed request - never replays ones that
+        # already reached the server - and lets the run loop observe stop().
+        self._coalesced_batch = []  # type: List[QueuedRequest]
+        self._coalesced_index = 0
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # Returns the head of the in-flight batch, otherwise pops a single
@@ -545,6 +567,8 @@ class RequestQueue(threading.Thread):
 
     def _task_done(self) -> None:
         self._current_batch = []
+        self._coalesced_batch = []
+        self._coalesced_index = 0
         self._persistqueue.task_done()
 
     def _create_buckets(self) -> None:
@@ -577,42 +601,55 @@ class RequestQueue(threading.Thread):
         identical data, so aw_transform.heartbeat_merge collapses them into a
         handful of long events. Sending the merged events to the heartbeat
         endpoint produces the same server-side result with far fewer requests.
+
+        Requests are grouped by bucket, not by full endpoint: grouping by
+        endpoint would reorder a bucket's heartbeats when their pulsetimes
+        differ. Within a bucket only a contiguous run sharing one endpoint is
+        merged, so the order of a bucket's requests is preserved exactly.
         """
-        groups = {}  # type: Dict[str, Tuple[Optional[float], List[Dict[str, Any]]]]
+        groups = {}  # type: Dict[str, List[QueuedRequest]]
         for request in batch:
-            if request.endpoint not in groups:
-                match = _HEARTBEAT_ENDPOINT_RE.match(request.endpoint)
-                pulsetime = float(match.group("pulsetime")) if match else None
-                groups[request.endpoint] = (pulsetime, [])
-            groups[request.endpoint][1].append(request.data)
+            parsed = _parse_heartbeat_endpoint(request.endpoint)
+            key = parsed[0] if parsed is not None else request.endpoint
+            groups.setdefault(key, []).append(request)
 
         coalesced = []  # type: List[QueuedRequest]
-        for endpoint, (pulsetime, datas) in groups.items():
-            if pulsetime is None:
-                # Unknown endpoint shape: send verbatim, unmerged.
-                coalesced.extend(QueuedRequest(endpoint, data) for data in datas)
-                continue
-            merged = []  # type: List[Event]
-            for data in datas:
-                event = _try_event(data)
-                if event is None:
-                    # Non-event payload: flush what has been merged and send
-                    # this one verbatim.
-                    coalesced.extend(
-                        QueuedRequest(endpoint, e.to_json_dict()) for e in merged
-                    )
-                    merged = []
-                    coalesced.append(QueuedRequest(endpoint, data))
-                    continue
-                if merged:
-                    merged_event = heartbeat_merge(merged[-1], event, pulsetime)
-                    if merged_event is not None:
-                        merged[-1] = merged_event
-                        continue
-                merged.append(event)
+
+        def flush(endpoint: Optional[str], merged: List[Event]) -> None:
             coalesced.extend(
                 QueuedRequest(endpoint, event.to_json_dict()) for event in merged
             )
+
+        for requests in groups.values():
+            merged = []  # type: List[Event]
+            merged_endpoint = None  # type: Optional[str]
+            for request in requests:
+                parsed = _parse_heartbeat_endpoint(request.endpoint)
+                event = _try_event(request.data) if parsed is not None else None
+                if (
+                    parsed is None
+                    or event is None
+                    or request.endpoint != merged_endpoint
+                ):
+                    # Unknown endpoint shape, non-event payload, or a new
+                    # endpoint: close the current run and start a new one.
+                    flush(merged_endpoint, merged)
+                    merged = []
+                    merged_endpoint = None
+                if parsed is None or event is None:
+                    coalesced.append(request)
+                    continue
+                if merged:
+                    merged_event = heartbeat_merge(merged[-1], event, parsed[1])
+                    if merged_event is not None:
+                        merged[-1] = merged_event
+                        continue
+                    # Not mergeable: close the run before starting a new one.
+                    flush(merged_endpoint, merged)
+                    merged = []
+                merged.append(event)
+                merged_endpoint = request.endpoint
+            flush(merged_endpoint, merged)
         return coalesced
 
     def _dispatch_request(self) -> None:
@@ -621,60 +658,69 @@ class RequestQueue(threading.Thread):
             self.wait(0.2)  # seconds to wait before re-polling the empty queue
             return
 
-        for request in self._coalesce(batch):
-            try:
-                self.client._post(request.endpoint, request.data)
-            except (req.exceptions.ConnectionError, req.exceptions.Timeout):
-                # Triggered by:
-                #   - server not running (connection refused)
-                #   - server not responding (timeout)
-                # Keep the whole batch in memory and go back to waiting for the
-                # server to become available (the run loop reconnects).
-                # Re-sending already-delivered heartbeats is safe: the server
-                # merges a duplicate into the last event as a no-op.
-                self.connected = False
-                logger.warning(
-                    "Connection refused or timeout, will queue requests until connection is available."
-                )
-                # wait a bit before retrying, so we don't spam the server (or logs), see:
-                #  - https://github.com/ActivityWatch/activitywatch/issues/815
-                #  - https://github.com/ActivityWatch/activitywatch/issues/756#issuecomment-1266662861
-                sleep(0.5)
+        if not self._coalesced_batch:
+            self._coalesced_batch = self._coalesce(batch)
+            if not self._coalesced_batch:
+                self._task_done()
                 return
-            except req.RequestException as e:
-                # NOTE: `e.response is not None` matters: Response.__bool__ is
-                # False for any non-2xx status, so a plain `if e.response` never
-                # matches an error response.
-                response = e.response
-                status_code = response.status_code if response is not None else None
-                if response is not None and status_code in self.RETRY_STATUS_CODES:
-                    # Transient server-side problem (busy, overloaded,
-                    # restarting or behind a flaky proxy) - the request itself
-                    # is likely fine, so keep the batch and retry. Heartbeats
-                    # are safe to replay: a duplicate of an already-processed
-                    # heartbeat merges into the last event as a no-op.
-                    delay = _retry_delay(response)
-                    logger.warning(
-                        f"Server error {status_code}, will retry in {delay}s: {request.endpoint}"
-                    )
-                    # stop-aware wait, so a long Retry-After can't block shutdown
-                    self.wait(delay)
-                    return
-                else:
-                    # Client errors (e.g. HTTP 400 - bad request, see
-                    # https://github.com/ActivityWatch/activitywatch/issues/815)
-                    # are likely to fail forever, so drop this request and
-                    # keep dispatching the rest of the batch. The remaining
-                    # requests are not lost: the batch is only acknowledged
-                    # once every request has been handled.
-                    logger.error(
-                        f"Request failed ({status_code}), not retrying: {request.data}"
-                    )
-            except Exception:
-                logger.exception(f"Unknown error, not retrying: {request.data}")
 
-        # Mark the whole batch as done
-        self._task_done()
+        # Dispatch one coalesced request per call: a transient error then
+        # retries only the failed request (never replays ones that already
+        # reached the server), and the run loop can observe stop() between
+        # requests instead of blocking on a long batch.
+        request = self._coalesced_batch[self._coalesced_index]
+        try:
+            self.client._post(request.endpoint, request.data)
+        except (req.exceptions.ConnectionError, req.exceptions.Timeout):
+            # Triggered by:
+            #   - server not running (connection refused)
+            #   - server not responding (timeout)
+            # Keep the batch in memory and go back to waiting for the server
+            # to become available (the run loop reconnects).
+            self.connected = False
+            logger.warning(
+                "Connection refused or timeout, will queue requests until connection is available."
+            )
+            # wait a bit before retrying, so we don't spam the server (or logs), see:
+            #  - https://github.com/ActivityWatch/activitywatch/issues/815
+            #  - https://github.com/ActivityWatch/activitywatch/issues/756#issuecomment-1266662861
+            sleep(0.5)
+            return
+        except req.RequestException as e:
+            # NOTE: `e.response is not None` matters: Response.__bool__ is
+            # False for any non-2xx status, so a plain `if e.response` never
+            # matches an error response.
+            response = e.response
+            status_code = response.status_code if response is not None else None
+            if response is not None and status_code in self.RETRY_STATUS_CODES:
+                # Transient server-side problem (busy, overloaded, restarting
+                # or behind a flaky proxy) - the request itself is likely
+                # fine, so retry it. Heartbeats are safe to replay: a
+                # duplicate of an already-processed heartbeat merges into the
+                # last event as a no-op.
+                delay = _retry_delay(response)
+                logger.warning(
+                    f"Server error {status_code}, will retry in {delay}s: {request.endpoint}"
+                )
+                # stop-aware wait, so a long Retry-After can't block shutdown
+                self.wait(delay)
+                return
+            else:
+                # Client errors (e.g. HTTP 400 - bad request, see
+                # https://github.com/ActivityWatch/activitywatch/issues/815)
+                # are likely to fail forever, so drop this request and move on
+                # to the next one.
+                logger.error(
+                    f"Request failed ({status_code}), not retrying: {request.data}"
+                )
+        except Exception:
+            logger.exception(f"Unknown error, not retrying: {request.data}")
+
+        # Handled (delivered or dropped); advance. Acknowledge the batch only
+        # once every request in it has been handled.
+        self._coalesced_index += 1
+        if self._coalesced_index >= len(self._coalesced_batch):
+            self._task_done()
 
     def run(self) -> None:
         self._stop_event.clear()

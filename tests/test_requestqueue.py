@@ -133,6 +133,12 @@ def _fresh_queue(client) -> RequestQueue:
     return rq
 
 
+def _drain(rq) -> None:
+    """Dispatch until the queue is empty (only for clients that succeed)."""
+    while rq._get_next_batch():
+        rq._dispatch_request()
+
+
 @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
 def test_dispatch_retries_transient_server_errors(status_code):
     """
@@ -262,7 +268,7 @@ def test_dispatch_does_not_merge_heartbeats_with_different_data():
             _heartbeat(i * 10, data={"title": f"window-{i}"}),
         )
 
-    rq._dispatch_request()
+    _drain(rq)
 
     assert client.post_calls == 5
     assert [d["data"]["title"] for _, d in client.posts] == [
@@ -284,7 +290,7 @@ def test_dispatch_batches_across_buckets():
             _heartbeat(i * 10, data={"title": "same"}),
         )
 
-    rq._dispatch_request()
+    _drain(rq)
 
     assert client.post_calls == 2
     assert sorted(endpoint for endpoint, _ in client.posts) == [
@@ -337,7 +343,7 @@ def test_dispatch_drops_bad_request_but_keeps_the_rest():
     rq.add_request("buckets/bad/heartbeat?pulsetime=10", _heartbeat(0))
     rq.add_request("buckets/good/heartbeat?pulsetime=10", _heartbeat(0, data={"k": 1}))
 
-    rq._dispatch_request()
+    _drain(rq)
 
     assert client.post_calls == 2
     assert [endpoint for endpoint, _ in client.posts] == [
@@ -370,3 +376,83 @@ def test_dispatch_drains_10k_heartbeats_in_batches():
     # The first request already spans the whole backlog (no data loss).
     assert client.posts[0][1]["duration"] > 0
     assert elapsed < 10, f"draining 10k heartbeats took {elapsed:.1f}s"
+
+
+def test_dispatch_preserves_order_when_pulsetimes_differ():
+    """
+    Heartbeats for one bucket with different pulsetimes must not be reordered
+    (grouping by endpoint alone would merge/reorder across the intervening
+    one and change the server-side timeline).
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(0))
+    rq.add_request("buckets/test/heartbeat?pulsetime=20", _heartbeat(10))
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(20))
+
+    _drain(rq)
+
+    assert [endpoint for endpoint, _ in client.posts] == [
+        "buckets/test/heartbeat?pulsetime=10",
+        "buckets/test/heartbeat?pulsetime=20",
+        "buckets/test/heartbeat?pulsetime=10",
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_handles_malformed_pulsetime_without_crashing():
+    """A malformed pulsetime must not raise inside coalescing: the request is
+    sent verbatim and the rest of the queue still drains."""
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    rq.add_request("buckets/test/heartbeat?pulsetime=1..2", _heartbeat(0))
+    rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(0, data={"k": 1}))
+
+    _drain(rq)
+
+    assert client.post_calls == 2
+    assert rq._get_next() is None
+
+
+def test_partial_retry_does_not_replay_delivered_requests():
+    """
+    If an earlier request in a batch is delivered and a later one hits a
+    transient error, the retry must resume at the failed request instead of
+    replaying the whole batch.
+    """
+
+    class FailSecondClient(RecordingClient):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def _post(self, endpoint, data, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                raise _http_error(503)
+            return super()._post(endpoint, data, **kwargs)
+
+    client = FailSecondClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    # Different data, so these are two separate (non-mergeable) requests.
+    rq.add_request(
+        "buckets/test/heartbeat?pulsetime=10", _heartbeat(0, data={"title": "a"})
+    )
+    rq.add_request(
+        "buckets/test/heartbeat?pulsetime=10", _heartbeat(10, data={"title": "b"})
+    )
+
+    rq._dispatch_request()  # a -> delivered
+    rq._dispatch_request()  # b -> 503, stays
+    rq._dispatch_request()  # b -> delivered
+
+    assert client.calls == 3, "the failed request should be retried, not the batch"
+    assert client.post_calls == 2
+    assert [d["data"]["title"] for _, d in client.posts] == ["a", "b"]
+    assert rq._get_next() is None
