@@ -17,6 +17,8 @@ basicConfig(level=DEBUG)
 import pytest
 import requests
 
+from aw_core.models import Event
+
 from aw_client.client import RequestQueue
 
 _BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -322,6 +324,46 @@ class RecordingClient(MockClient):
         self.post_calls += 1
         return requests.Response()
 
+    def get_events(self, bucket_id, limit=-1, start=None, end=None):
+        return []
+
+    def sent_events(self):
+        """Every event posted, in order, whether by heartbeat or bulk insert."""
+        out = []
+        for _, data in self.posts:
+            out.extend(data if isinstance(data, list) else [data])
+        return out
+
+
+class StoringClient(RecordingClient):
+    """Fake server: stores inserted events and serves them from get_events.
+
+    `fail_insert_after_store` makes the next bulk insert store its events and
+    then raise, i.e. the request succeeded but the response was lost.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.stored = []
+        self.fail_insert_after_store = None
+
+    def _post(self, endpoint, data, **kwargs):
+        if endpoint.endswith("/events"):
+            self.stored.extend(Event(**d) for d in data)
+            if self.fail_insert_after_store is not None:
+                exc, self.fail_insert_after_store = self.fail_insert_after_store, None
+                raise exc
+        else:
+            self.stored.append(Event(**data))
+        return super()._post(endpoint, data, **kwargs)
+
+    def get_events(self, bucket_id, limit=-1, start=None, end=None):
+        return [
+            e
+            for e in self.stored
+            if e.timestamp < end and e.timestamp + e.duration > start
+        ]
+
 
 def test_dispatch_merges_consecutive_queued_heartbeats(tmp_path):
     """
@@ -364,14 +406,132 @@ def test_dispatch_does_not_merge_heartbeats_with_different_data(tmp_path):
 
     _drain(rq)
 
-    assert client.post_calls == 5
-    assert [d["data"]["title"] for _, d in client.posts] == [
+    # First and last as heartbeats, the middle three in one bulk insert.
+    assert [endpoint for endpoint, _ in client.posts] == [
+        "buckets/test/heartbeat?pulsetime=10",
+        "buckets/test/events",
+        "buckets/test/heartbeat?pulsetime=10",
+    ]
+    assert [d["data"]["title"] for d in client.sent_events()] == [
         f"window-{i}" for i in range(5)
     ]
     assert rq._get_next() is None
 
 
-def test_dispatch_batches_across_buckets(tmp_path):
+def test_dispatch_bulk_inserts_unmergeable_backlog_in_chunks():
+    """
+    A backlog of events that cannot merge (e.g. changing window titles) is
+    sent as heartbeat + bulk-insert chunks + heartbeat, not one request each,
+    and every event arrives exactly once and in order (issue #32).
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 250
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    _drain(rq)
+
+    chunks = -(-(n - 2) // rq.INSERT_CHUNK_SIZE)  # ceil
+    assert client.post_calls == 2 + chunks  # 5 instead of 250
+    assert client.posts[0][0] == "buckets/test/heartbeat?pulsetime=10"
+    assert client.posts[-1][0] == "buckets/test/heartbeat?pulsetime=10"
+    assert all(endpoint == "buckets/test/events" for endpoint, _ in client.posts[1:-1])
+    assert [d["data"]["title"] for d in client.sent_events()] == [
+        f"window-{i}" for i in range(n)
+    ]
+    assert rq._get_next() is None
+
+
+def test_dispatch_short_run_stays_heartbeats():
+    """
+    If the whole run fits within pulsetime, the last heartbeat could merge
+    into a stale cached event on aw-server (Python), so no insert is used.
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    for i in range(4):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i, duration_s=0.5, data={"title": f"window-{i}"}),
+        )
+
+    _drain(rq)
+
+    assert client.post_calls == 4
+    assert all("/heartbeat" in endpoint for endpoint, _ in client.posts)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [requests.exceptions.Timeout(), requests.exceptions.ConnectionError()],
+)
+def test_insert_retry_after_lost_response_does_not_duplicate(exc):
+    """
+    A bulk insert is not idempotent. If it reached the server but the
+    response was lost, the retry must not insert the events a second time.
+    """
+    client = StoringClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 20
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    rq._dispatch_request()  # first event, heartbeat
+    client.fail_insert_after_store = exc
+    rq._dispatch_request()  # insert stored, response lost -> retried
+    assert rq._get_next() is not None
+
+    _drain(rq)
+
+    titles = [e.data["title"] for e in client.stored]
+    assert titles == [f"window-{i}" for i in range(n)], "each event exactly once"
+    assert rq._get_next() is None
+
+
+def test_insert_retry_resends_when_nothing_was_stored():
+    """A failed insert that never reached the server is resent in full."""
+    client = StoringClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 20
+    for i in range(n):
+        rq.add_request(
+            "buckets/test/heartbeat?pulsetime=10",
+            _heartbeat(i * 10, data={"title": f"window-{i}"}),
+        )
+
+    rq._dispatch_request()  # first event, heartbeat
+    real_post = client._post
+
+    def refuse(endpoint, data, **kwargs):
+        raise requests.exceptions.ConnectionError()
+
+    client._post = refuse
+    rq._dispatch_request()  # insert refused before reaching the server
+    client._post = real_post
+
+    _drain(rq)
+
+    titles = [e.data["title"] for e in client.stored]
+    assert titles == [f"window-{i}" for i in range(n)]
+    assert rq._get_next() is None
+
+
+def test_dispatch_batches_across_buckets():
     """Interleaved buckets are grouped, so each bucket drains in one request."""
     client = RecordingClient()
     rq = _fresh_queue(client, tmp_path)
