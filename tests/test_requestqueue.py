@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import time
 from datetime import datetime, timedelta, timezone
 from time import sleep
 from logging import basicConfig, DEBUG
@@ -343,3 +344,29 @@ def test_dispatch_drops_bad_request_but_keeps_the_rest():
         "buckets/good/heartbeat?pulsetime=10"
     ]
     assert rq._get_next() is None
+
+
+def test_dispatch_drains_10k_heartbeats_in_batches():
+    """
+    A large offline backlog (10k mergeable heartbeats) must drain with one
+    request per batch, quickly and without losing data.
+    """
+    client = RecordingClient()
+    rq = _fresh_queue(client)
+    rq.connected = True
+
+    n = 10_000
+    for i in range(n):
+        rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(i * 10))
+
+    start = time.monotonic()
+    while rq._get_next_batch():
+        rq._dispatch_request()
+    elapsed = time.monotonic() - start
+
+    # Every batch merges to a single heartbeat request.
+    assert client.post_calls == n // rq.BATCH_SIZE
+    assert rq._get_next() is None
+    # The first request already spans the whole backlog (no data loss).
+    assert client.posts[0][1]["duration"] > 0
+    assert elapsed < 10, f"draining 10k heartbeats took {elapsed:.1f}s"
