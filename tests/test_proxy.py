@@ -39,11 +39,13 @@ def dead_proxy_env(tmp_path, monkeypatch):
     """A proxied environment where NO_PROXY lists localhost but not 127.0.0.1."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(client_module, "SingleInstance", lambda name: object())
+    # Delete lowercase variants before setting: env vars are case-insensitive
+    # on Windows, so deleting after setting would remove the uppercase one too.
+    for var in ("http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+        monkeypatch.delenv(var, raising=False)
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         monkeypatch.setenv(var, DEAD_PROXY)
-        monkeypatch.delenv(var.lower(), raising=False)
     monkeypatch.setenv("NO_PROXY", "localhost")
-    monkeypatch.delenv("no_proxy", raising=False)
 
 
 @pytest.mark.parametrize(
