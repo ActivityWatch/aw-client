@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import threading
 from time import sleep
 from logging import basicConfig, DEBUG
 
@@ -88,3 +89,63 @@ def test_register_bucket_marks_queue_disconnected_on_create_failure():
 
     assert rq.connected is False
     assert client.create_bucket_calls == [(("test-bucket", "test-type"), {})]
+
+
+def test_wait_for_queue_empty_basic():
+    """Queue empties normally while connected and running."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    rq.start()
+
+    rq.add_request("/api/0/buckets/test/heartbeat", {})
+    result = rq.wait_for_queue_empty(timeout=5)
+
+    rq.stop()
+    rq.join()
+    assert result is True
+
+
+def test_wait_for_queue_empty_not_running():
+    """Returns True immediately if the queue thread isn't running."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    # Thread never started, should return True instantly
+    result = rq.wait_for_queue_empty(timeout=5)
+    assert result is True
+
+
+def test_wait_for_queue_empty_pending_not_running():
+    """Returns False when requests are pending but the thread isn't running."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    # Nothing can flush this request: the thread was never started.
+    rq.add_request("/api/0/buckets/test/heartbeat", {})
+    result = rq.wait_for_queue_empty(timeout=5)
+    assert result is False
+
+
+def test_wait_for_queue_empty_timeout():
+    """Returns False if the queue doesn't empty before the timeout."""
+    import unittest.mock as mock
+
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+
+    # Block _post until the test releases it, so the queue can't empty before
+    # the timeout without adding a multi-second sleep to every run.
+    release = threading.Event()
+
+    def slow_post(endpoint, data):
+        release.wait(10)
+
+    with mock.patch.object(client, "_post", slow_post):
+        rq.start()
+        rq.add_request("/api/0/buckets/test/heartbeat", {})
+        try:
+            result = rq.wait_for_queue_empty(timeout=0.5)
+        finally:
+            release.set()
+            rq.stop()
+            rq.join()
+
+    assert result is False
