@@ -20,6 +20,20 @@ class _InfoHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        self._record_and_ok()
+
+    def do_DELETE(self):
+        self._record_and_ok()
+
+    def _record_and_ok(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        self.server.requests.append((self.command, self.path))  # type: ignore[attr-defined]
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def log_message(self, *args):
         pass
 
@@ -27,9 +41,10 @@ class _InfoHandler(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def stub_server():
     server = http.server.HTTPServer(("127.0.0.1", 0), _InfoHandler)
+    server.requests = []  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield server.server_address[1]
+    yield server
     server.shutdown()
     server.server_close()
 
@@ -75,8 +90,16 @@ def test_is_not_loopback_host(host):
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
 def test_loopback_server_bypasses_env_proxy(dead_proxy_env, stub_server, host):
-    client = ActivityWatchClient("test-client", host=host, port=stub_server)
+    port = stub_server.server_address[1]
+    client = ActivityWatchClient("test-client", host=host, port=port)
     assert client.get_info()["hostname"] == "stub"
+    # POST and DELETE go through the same bypass
+    client.create_bucket("test-bucket", "test")
+    client.delete_bucket("test-bucket")
+    assert stub_server.requests == [
+        ("POST", "/api/0/buckets/test-bucket"),
+        ("DELETE", "/api/0/buckets/test-bucket"),
+    ]
 
 
 def test_remote_server_still_uses_env_proxy(dead_proxy_env):
