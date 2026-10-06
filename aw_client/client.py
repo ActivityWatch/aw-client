@@ -716,7 +716,7 @@ class RequestQueue(threading.Thread):
                 # https://github.com/ActivityWatch/activitywatch/issues/815)
                 # are likely to fail forever, so drop the request instead of
                 # blocking the queue.
-                logger.error(
+                logger.exception(
                     f"Request failed ({status_code}), not retrying: {request.data}"
                 )
         except Exception:

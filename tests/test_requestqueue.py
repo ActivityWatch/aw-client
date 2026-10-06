@@ -211,16 +211,13 @@ class FlakyClient(MockClient):
         return requests.Response()
 
 
-def _fresh_queue(client) -> RequestQueue:
-    """Create a RequestQueue and drain requests persisted by earlier runs."""
-    rq = RequestQueue(client)  # type: ignore
-    while rq._get_next():
-        rq._task_done()
-    return rq
+def _fresh_queue(client, tmp_path) -> RequestQueue:
+    """Create a RequestQueue backed by an isolated, empty on-disk queue."""
+    return RequestQueue(client, persistqueue_path=str(tmp_path / "queue"))  # type: ignore
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
-def test_dispatch_retries_transient_server_errors(status_code):
+def test_dispatch_retries_transient_server_errors(status_code, tmp_path):
     """
     Transient server-side errors (e.g. 503 from aw-server's heartbeat-lock
     timeout) must keep the request in the queue for a later retry, then
@@ -231,7 +228,7 @@ def test_dispatch_retries_transient_server_errors(status_code):
     "not retrying" path (dropping the request permanently).
     """
     client = FlakyClient(_http_error(status_code))
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/test/heartbeat?pulsetime=10", {"label": "test"})
@@ -247,10 +244,10 @@ def test_dispatch_retries_transient_server_errors(status_code):
     assert rq._get_next() is None  # delivered and popped
 
 
-def test_dispatch_drops_client_errors():
+def test_dispatch_drops_client_errors(tmp_path):
     """A bad payload (HTTP 400) fails forever and must not block the queue."""
     client = FlakyClient(_http_error(400))
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/test/heartbeat?pulsetime=10", {"label": "bad"})
@@ -260,14 +257,14 @@ def test_dispatch_drops_client_errors():
     assert rq._get_next() is None  # dropped
 
 
-def test_dispatch_keeps_queue_on_connection_error():
+def test_dispatch_keeps_queue_on_connection_error(tmp_path):
     """
     A connection error mid-dispatch (server died after connect) must keep the
     request queued and mark the queue disconnected, so the run loop goes back
     to reconnecting instead of draining the queue into the void.
     """
     client = FlakyClient(requests.exceptions.ConnectionError())
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/test/heartbeat?pulsetime=10", {"label": "test"})
