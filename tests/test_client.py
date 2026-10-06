@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import logging
 import time
 import warnings
 from random import random
@@ -187,11 +188,15 @@ def test_queued_heartbeat_retries_unqueued_events_before_newer_ones():
     assert [d["data"] for d in sent] == [{"a": 1}, {"a": 2}, {"a": 3}]
 
 
-def test_unqueued_heartbeats_are_bounded(monkeypatch):
+def test_unqueued_heartbeats_are_bounded(monkeypatch, caplog):
     monkeypatch.setattr(client_module, "_MAX_UNQUEUED_HEARTBEATS", 2)
     client, sent = _client_with_flaky_queue([False] * 4 + [True] * 3)
-    for t in range(6):
-        client.heartbeat("b", _event(t, {"a": t}), pulsetime=10, queued=True)
+    with caplog.at_level(logging.WARNING):
+        for t in range(6):
+            client.heartbeat("b", _event(t, {"a": t}), pulsetime=10, queued=True)
 
     # Only the newest unqueued heartbeats are kept; the oldest ones are dropped.
     assert [d["data"] for d in sent] == [{"a": 2}, {"a": 3}, {"a": 4}]
+    # The first eviction warns once, and the drop count is reported on recovery.
+    assert sum("buffer for b is full" in m for m in caplog.messages) == 1
+    assert "Dropped 2 heartbeats for b while the queue was unwritable" in caplog.messages

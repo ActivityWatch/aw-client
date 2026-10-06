@@ -144,6 +144,7 @@ class ActivityWatchClient:
         # Committed heartbeats whose queue write failed, retried in order before the next commit.
         # Bounded so a sustained failure can't grow memory without limit; the oldest are dropped.
         self._unqueued_heartbeats = {}  # type: Dict[str, Deque[Tuple[str, dict]]]
+        self._dropped_heartbeats = {}  # type: Dict[str, int]
         self._warned_queue_before_connect = False
 
     #
@@ -323,9 +324,17 @@ class ActivityWatchClient:
                 data = last_heartbeat.to_json_dict()
                 if not self._queue_heartbeat(bucket_id, endpoint, data):
                     # Can't merge with the new event, so hold the old one for retry.
-                    self._unqueued_heartbeats.setdefault(
+                    unqueued = self._unqueued_heartbeats.setdefault(
                         bucket_id, deque(maxlen=_MAX_UNQUEUED_HEARTBEATS)
-                    ).append((endpoint, data))
+                    )
+                    if len(unqueued) == unqueued.maxlen:
+                        dropped = self._dropped_heartbeats.get(bucket_id, 0)
+                        if not dropped:
+                            logger.warning(
+                                f"Unqueued heartbeat buffer for {bucket_id} is full, dropping oldest heartbeats"
+                            )
+                        self._dropped_heartbeats[bucket_id] = dropped + 1
+                    unqueued.append((endpoint, data))
                 self.last_heartbeat[bucket_id] = event
         else:
             self._post(endpoint, event.to_json_dict())
@@ -337,6 +346,11 @@ class ActivityWatchClient:
             if not self.request_queue.add_request(*unqueued[0]):
                 return False
             unqueued.popleft()
+        dropped = self._dropped_heartbeats.pop(bucket_id, 0)
+        if dropped:
+            logger.warning(
+                f"Dropped {dropped} heartbeats for {bucket_id} while the queue was unwritable"
+            )
         return self.request_queue.add_request(endpoint, data)
 
     #
