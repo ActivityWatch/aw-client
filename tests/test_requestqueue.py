@@ -108,3 +108,20 @@ def test_add_request_disk_full(caplog):
 
     warnings = [r for r in caplog.records if "Failed to queue request" in r.message]
     assert len(warnings) == 1
+
+
+def test_add_request_sqlite_full_then_recovers(tmp_path):
+    """A real full SQLite database raises OperationalError, not OSError."""
+    client = MockClient()
+    rq = RequestQueue(client, persistqueue_path=str(tmp_path / "q"))  # type: ignore
+    putter = rq._persistqueue._putter
+    putter.execute("PRAGMA max_page_count=3")  # type: ignore
+
+    data = {"data": "x" * 500}
+    results = [rq.add_request("/api/0/buckets/test/heartbeat", data) for _ in range(20)]
+    assert results[0] is True
+    assert results[-1] is False
+
+    # Once space is available again, writes succeed
+    putter.execute("PRAGMA max_page_count=1073741823")  # type: ignore
+    assert rq.add_request("/api/0/buckets/test/heartbeat", data) is True

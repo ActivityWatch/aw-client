@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import socket
+import sqlite3
 import threading
 import warnings
 from collections import namedtuple
@@ -630,7 +631,8 @@ class RequestQueue(threading.Thread):
         assert isinstance(data, dict)
         try:
             self._persistqueue.put(QueuedRequest(endpoint, data))
-        except OSError as e:
+        # SQLite reports a full disk as OperationalError, not OSError
+        except (OSError, sqlite3.OperationalError) as e:
             # Warn once per failure streak to avoid flooding logs on a full disk.
             if not self._queue_write_failing:
                 logger.warning(
