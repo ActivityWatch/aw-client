@@ -471,6 +471,14 @@ def test_dispatch_drains_10k_heartbeats_in_batches():
     total = sum(data["duration"] for _, data in client.posts)
     assert total == pytest.approx(n * 10)
     assert all(data["data"] == {"status": "not-afk"} for _, data in client.posts)
+    # ...and they tile it contiguously: the first starts at the first queued
+    # heartbeat, each starts where the previous ended, the last ends at the end.
+    expected_start = _BASE
+    for _, data in client.posts:
+        start = datetime.fromisoformat(str(data["timestamp"]))
+        assert start == expected_start
+        expected_start = start + timedelta(seconds=data["duration"])
+    assert expected_start == _BASE + timedelta(seconds=n * 10)
 
 
 def test_dispatch_preserves_order_when_pulsetimes_differ():
