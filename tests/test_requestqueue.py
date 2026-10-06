@@ -340,9 +340,9 @@ def test_dispatch_merges_consecutive_queued_heartbeats():
 
     rq._dispatch_request()
 
-    assert client.post_calls == 1, (
-        "mergeable heartbeats should collapse into one request"
-    )
+    assert (
+        client.post_calls == 1
+    ), "mergeable heartbeats should collapse into one request"
     assert rq._get_next() is None, "the queue should be fully drained"
     endpoint, data = client.posts[0]
     assert endpoint == "buckets/test/heartbeat?pulsetime=10"
