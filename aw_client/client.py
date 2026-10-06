@@ -137,6 +137,8 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
+        # Committed heartbeats whose queue write failed, retried in order before the next commit
+        self._unqueued_heartbeats = {}  # type: Dict[str, List[Tuple[str, dict]]]
         self._warned_queue_before_connect = False
 
     #
@@ -305,7 +307,7 @@ class ActivityWatchClient:
                 diff = (last_heartbeat.duration).total_seconds()
                 if diff >= _commit_interval:
                     data = merge.to_json_dict()
-                    if self.request_queue.add_request(endpoint, data):
+                    if self._queue_heartbeat(bucket_id, endpoint, data):
                         self.last_heartbeat[bucket_id] = event
                     else:
                         # Keep the merged interval pending; the next heartbeat retries it.
@@ -314,11 +316,23 @@ class ActivityWatchClient:
                     self.last_heartbeat[bucket_id] = merge
             else:
                 data = last_heartbeat.to_json_dict()
-                if self.request_queue.add_request(endpoint, data):
-                    self.last_heartbeat[bucket_id] = event
-                # else: keep last_heartbeat pending so the next heartbeat retries it
+                if not self._queue_heartbeat(bucket_id, endpoint, data):
+                    # Can't merge with the new event, so hold the old one for retry.
+                    self._unqueued_heartbeats.setdefault(bucket_id, []).append(
+                        (endpoint, data)
+                    )
+                self.last_heartbeat[bucket_id] = event
         else:
             self._post(endpoint, event.to_json_dict())
+
+    def _queue_heartbeat(self, bucket_id: str, endpoint: str, data: dict) -> bool:
+        """Queue a heartbeat after any earlier ones that failed to queue, preserving order."""
+        unqueued = self._unqueued_heartbeats.get(bucket_id, [])
+        while unqueued:
+            if not self.request_queue.add_request(*unqueued[0]):
+                return False
+            unqueued.pop(0)
+        return self.request_queue.add_request(endpoint, data)
 
     #
     #   Bucket get/post requests

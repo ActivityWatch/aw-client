@@ -167,11 +167,20 @@ def test_queued_heartbeat_keeps_merged_interval_when_queue_write_fails():
     assert sent[0]["duration"] == 2
 
 
-def test_queued_heartbeat_keeps_unmerged_event_when_queue_write_fails():
-    client, sent = _client_with_flaky_queue([False, True])
+def test_queued_heartbeat_keeps_unmerged_events_when_queue_write_fails():
+    client, sent = _client_with_flaky_queue([False, True, True])
     client.heartbeat("b", _event(0, {"a": 1}), pulsetime=10, queued=True)
     client.heartbeat("b", _event(1, {"a": 2}), pulsetime=10, queued=True)
-    client.heartbeat("b", _event(2, {"a": 2}), pulsetime=10, queued=True)
+    client.heartbeat("b", _event(2, {"a": 3}), pulsetime=10, queued=True)
 
-    # The event pending at the failed write is retried on the next heartbeat.
-    assert [d["data"] for d in sent] == [{"a": 1}]
+    # Neither the event whose write failed nor the one that arrived with it is
+    # lost, and the retried event is queued first.
+    assert [d["data"] for d in sent] == [{"a": 1}, {"a": 2}]
+
+
+def test_queued_heartbeat_retries_unqueued_events_before_newer_ones():
+    client, sent = _client_with_flaky_queue([False, False, True, True, True])
+    for t, a in enumerate((1, 2, 3, 4)):
+        client.heartbeat("b", _event(t, {"a": a}), pulsetime=10, queued=True)
+
+    assert [d["data"] for d in sent] == [{"a": 1}, {"a": 2}, {"a": 3}]
