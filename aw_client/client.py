@@ -6,12 +6,13 @@ import socket
 import sqlite3
 import threading
 import warnings
-from collections import namedtuple
+from collections import deque, namedtuple
 from datetime import datetime
 from time import sleep
 from typing import (
     Any,
     Callable,
+    Deque,
     Dict,
     List,
     Optional,
@@ -35,6 +36,9 @@ from .profile import (
     resolve_profile,
 )
 from .singleinstance import SingleInstance
+
+# Per-bucket cap on heartbeats held in memory while queue writes fail (e.g. disk full)
+_MAX_UNQUEUED_HEARTBEATS = 1000
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -137,8 +141,9 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
-        # Committed heartbeats whose queue write failed, retried in order before the next commit
-        self._unqueued_heartbeats = {}  # type: Dict[str, List[Tuple[str, dict]]]
+        # Committed heartbeats whose queue write failed, retried in order before the next commit.
+        # Bounded so a sustained failure can't grow memory without limit; the oldest are dropped.
+        self._unqueued_heartbeats = {}  # type: Dict[str, Deque[Tuple[str, dict]]]
         self._warned_queue_before_connect = False
 
     #
@@ -318,20 +323,20 @@ class ActivityWatchClient:
                 data = last_heartbeat.to_json_dict()
                 if not self._queue_heartbeat(bucket_id, endpoint, data):
                     # Can't merge with the new event, so hold the old one for retry.
-                    self._unqueued_heartbeats.setdefault(bucket_id, []).append(
-                        (endpoint, data)
-                    )
+                    self._unqueued_heartbeats.setdefault(
+                        bucket_id, deque(maxlen=_MAX_UNQUEUED_HEARTBEATS)
+                    ).append((endpoint, data))
                 self.last_heartbeat[bucket_id] = event
         else:
             self._post(endpoint, event.to_json_dict())
 
     def _queue_heartbeat(self, bucket_id: str, endpoint: str, data: dict) -> bool:
         """Queue a heartbeat after any earlier ones that failed to queue, preserving order."""
-        unqueued = self._unqueued_heartbeats.get(bucket_id, [])
+        unqueued = self._unqueued_heartbeats.get(bucket_id, deque())
         while unqueued:
             if not self.request_queue.add_request(*unqueued[0]):
                 return False
-            unqueued.pop(0)
+            unqueued.popleft()
         return self.request_queue.add_request(endpoint, data)
 
     #

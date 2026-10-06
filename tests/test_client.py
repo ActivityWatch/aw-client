@@ -9,6 +9,7 @@ import pytest
 
 from aw_core.models import Event
 from aw_client import ActivityWatchClient
+from aw_client import client as client_module
 
 
 def create_unique_event():
@@ -184,3 +185,13 @@ def test_queued_heartbeat_retries_unqueued_events_before_newer_ones():
         client.heartbeat("b", _event(t, {"a": a}), pulsetime=10, queued=True)
 
     assert [d["data"] for d in sent] == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+def test_unqueued_heartbeats_are_bounded(monkeypatch):
+    monkeypatch.setattr(client_module, "_MAX_UNQUEUED_HEARTBEATS", 2)
+    client, sent = _client_with_flaky_queue([False] * 4 + [True] * 3)
+    for t in range(6):
+        client.heartbeat("b", _event(t, {"a": t}), pulsetime=10, queued=True)
+
+    # Only the newest unqueued heartbeats are kept; the oldest ones are dropped.
+    assert [d["data"] for d in sent] == [{"a": 2}, {"a": 3}, {"a": 4}]
