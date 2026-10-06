@@ -102,6 +102,9 @@ def test_add_request_disk_full(caplog):
 
     # Should not raise, the OSError should be caught internally and logged instead
     with caplog.at_level(WARNING, logger="aw_client.client"):
-        rq.add_request("/api/0/buckets/test/heartbeat", {})
+        assert rq.add_request("/api/0/buckets/test/heartbeat", {}) is False
+        # A sustained failure warns once, not once per heartbeat
+        assert rq.add_request("/api/0/buckets/test/heartbeat", {}) is False
 
-    assert "Failed to queue request" in caplog.text
+    warnings = [r for r in caplog.records if "Failed to queue request" in r.message]
+    assert len(warnings) == 1

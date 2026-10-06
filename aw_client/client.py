@@ -304,14 +304,18 @@ class ActivityWatchClient:
                 diff = (last_heartbeat.duration).total_seconds()
                 if diff >= _commit_interval:
                     data = merge.to_json_dict()
-                    self.request_queue.add_request(endpoint, data)
-                    self.last_heartbeat[bucket_id] = event
+                    if self.request_queue.add_request(endpoint, data):
+                        self.last_heartbeat[bucket_id] = event
+                    else:
+                        # Keep the merged interval pending; the next heartbeat retries it.
+                        self.last_heartbeat[bucket_id] = merge
                 else:
                     self.last_heartbeat[bucket_id] = merge
             else:
                 data = last_heartbeat.to_json_dict()
-                self.request_queue.add_request(endpoint, data)
-                self.last_heartbeat[bucket_id] = event
+                if self.request_queue.add_request(endpoint, data):
+                    self.last_heartbeat[bucket_id] = event
+                # else: keep last_heartbeat pending so the next heartbeat retries it
         else:
             self._post(endpoint, event.to_json_dict())
 
@@ -514,6 +518,7 @@ class RequestQueue(threading.Thread):
             persistqueue_path, multithreading=True, auto_commit=False
         )
         self._current = None  # type: Optional[QueuedRequest]
+        self._queue_write_failing = False
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # self._current will always hold the next not-yet-sent event,
@@ -614,9 +619,11 @@ class RequestQueue(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
-    def add_request(self, endpoint: str, data: dict) -> None:
+    def add_request(self, endpoint: str, data: dict) -> bool:
         """
         Add a request to the queue.
+        Returns False if the request could not be persisted (e.g. disk full),
+        so the caller can keep it pending and retry.
         NOTE: Only supports heartbeats
         """
         assert "/heartbeat" in endpoint
@@ -624,9 +631,19 @@ class RequestQueue(threading.Thread):
         try:
             self._persistqueue.put(QueuedRequest(endpoint, data))
         except OSError as e:
-            logger.warning(
-                f"Failed to queue request, possibly due to insufficient disk space: {e}"
-            )
+            # Warn once per failure streak to avoid flooding logs on a full disk.
+            if not self._queue_write_failing:
+                logger.warning(
+                    f"Failed to queue request, possibly due to insufficient disk space: {e}"
+                )
+                self._queue_write_failing = True
+            else:
+                logger.debug(f"Failed to queue request (still failing): {e}")
+            return False
+        if self._queue_write_failing:
+            logger.info("Queueing requests succeeded again")
+            self._queue_write_failing = False
+        return True
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)

@@ -128,3 +128,50 @@ def test_queued_usage_warns_once_before_connect():
         if "connect()" in str(warning.message) or "with client:" in str(warning.message)
     ]
     assert len(queue_warnings) == 1
+
+
+def _event(seconds: int, data: dict) -> Event:
+    return Event(
+        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        + timedelta(seconds=seconds),
+        data=data,
+    )
+
+
+def _client_with_flaky_queue(results):
+    """Client whose queue write returns the given results in order, recording calls."""
+    client = ActivityWatchClient(f"aw-test-client-{random()}", testing=True)
+    client._warned_queue_before_connect = True
+    sent = []
+
+    def add_request(endpoint, data):
+        ok = results.pop(0)
+        if ok:
+            sent.append(data)
+        return ok
+
+    client.request_queue.add_request = add_request  # type: ignore
+    return client, sent
+
+
+def test_queued_heartbeat_keeps_merged_interval_when_queue_write_fails():
+    client, sent = _client_with_flaky_queue([False, True])
+    for t in (0, 1, 2):
+        client.heartbeat(
+            "b", _event(t, {"a": 1}), pulsetime=10, queued=True, commit_interval=0.5
+        )
+
+    # The failed commit at t=1 is not lost: the retry at t=2 covers it.
+    assert len(sent) == 1
+    assert sent[0]["timestamp"].startswith("2026-01-01T00:00:00")
+    assert sent[0]["duration"] == 2
+
+
+def test_queued_heartbeat_keeps_unmerged_event_when_queue_write_fails():
+    client, sent = _client_with_flaky_queue([False, True])
+    client.heartbeat("b", _event(0, {"a": 1}), pulsetime=10, queued=True)
+    client.heartbeat("b", _event(1, {"a": 2}), pulsetime=10, queued=True)
+    client.heartbeat("b", _event(2, {"a": 2}), pulsetime=10, queued=True)
+
+    # The event pending at the failed write is retried on the next heartbeat.
+    assert [d["data"] for d in sent] == [{"a": 1}]
