@@ -199,4 +199,6 @@ def test_unqueued_heartbeats_are_bounded(monkeypatch, caplog):
     assert [d["data"] for d in sent] == [{"a": 2}, {"a": 3}, {"a": 4}]
     # The first eviction warns once, and the drop count is reported on recovery.
     assert sum("buffer for b is full" in m for m in caplog.messages) == 1
-    assert "Dropped 2 heartbeats for b while the queue was unwritable" in caplog.messages
+    assert (
+        "Dropped 2 heartbeats for b while the queue was unwritable" in caplog.messages
+    )
