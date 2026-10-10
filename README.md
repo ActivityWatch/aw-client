@@ -72,3 +72,4 @@ The [`examples/`](examples/) directory contains a couple of example scripts, inc
  - [`load_dataframe.py`](https://github.com/ActivityWatch/aw-client/blob/master/examples/load_dataframe.py) - loads events from a host using a categorizing & AFK-filtering query, put result in a pandas dataframe, and export as CSV.
  - [`merge_buckets.py`](examples/merge_buckets.py) - merges two buckets with non-intersecting events by moving all events from one into the other.
  - [`redact_sensitive.py`](examples/redact_sensitive.py) - redact sensitive events.
+ - [`export_for_workflow_mining.py`](examples/export_for_workflow_mining.py) - exports canonical, categorized events to a flat JSON file (timestamp/duration/data per event) for use with external process-mining or workflow-discovery tools.
