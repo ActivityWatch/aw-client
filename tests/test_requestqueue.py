@@ -8,7 +8,6 @@ with confidence, and I need some of that right now.
 """
 
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from time import sleep
 from logging import basicConfig, DEBUG, WARNING
@@ -324,14 +323,14 @@ class RecordingClient(MockClient):
         return requests.Response()
 
 
-def test_dispatch_merges_consecutive_queued_heartbeats():
+def test_dispatch_merges_consecutive_queued_heartbeats(tmp_path):
     """
     A long offline backlog of heartbeats for one bucket must collapse into a
     handful of requests instead of one per heartbeat, without losing data
     (issue #32 / #7).
     """
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 200
@@ -351,10 +350,10 @@ def test_dispatch_merges_consecutive_queued_heartbeats():
     assert data["data"] == {"status": "not-afk"}
 
 
-def test_dispatch_does_not_merge_heartbeats_with_different_data():
+def test_dispatch_does_not_merge_heartbeats_with_different_data(tmp_path):
     """Heartbeats whose data differs must each be sent, in order."""
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     for i in range(5):
@@ -372,10 +371,10 @@ def test_dispatch_does_not_merge_heartbeats_with_different_data():
     assert rq._get_next() is None
 
 
-def test_dispatch_batches_across_buckets():
+def test_dispatch_batches_across_buckets(tmp_path):
     """Interleaved buckets are grouped, so each bucket drains in one request."""
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     for i in range(50):
@@ -395,10 +394,10 @@ def test_dispatch_batches_across_buckets():
     assert rq._get_next() is None
 
 
-def test_dispatch_retry_keeps_whole_batch_then_merges():
+def test_dispatch_retry_keeps_whole_batch_then_merges(tmp_path):
     """A transient error retains the whole batch; the retry merges it."""
     client = FlakyClient(_http_error(503))
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 50
@@ -417,7 +416,7 @@ def test_dispatch_retry_keeps_whole_batch_then_merges():
     assert rq._get_next() is None
 
 
-def test_dispatch_drops_bad_request_but_keeps_the_rest():
+def test_dispatch_drops_bad_request_but_keeps_the_rest(tmp_path):
     """
     A non-retryable error (HTTP 400) drops only that request; the rest of the
     batch must still be dispatched and the queue fully drained.
@@ -432,7 +431,7 @@ def test_dispatch_drops_bad_request_but_keeps_the_rest():
             return requests.Response()
 
     client = SelectiveFailClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/bad/heartbeat?pulsetime=10", _heartbeat(0))
@@ -447,13 +446,13 @@ def test_dispatch_drops_bad_request_but_keeps_the_rest():
     assert rq._get_next() is None
 
 
-def test_dispatch_drains_10k_heartbeats_in_batches():
+def test_dispatch_drains_10k_heartbeats_in_batches(tmp_path):
     """
     A large offline backlog (10k mergeable heartbeats) must drain with one
     request per batch, quickly and without losing data.
     """
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 10_000
@@ -481,14 +480,14 @@ def test_dispatch_drains_10k_heartbeats_in_batches():
     assert expected_start == _BASE + timedelta(seconds=n * 10)
 
 
-def test_dispatch_preserves_order_when_pulsetimes_differ():
+def test_dispatch_preserves_order_when_pulsetimes_differ(tmp_path):
     """
     Heartbeats for one bucket with different pulsetimes must not be reordered
     (grouping by endpoint alone would merge/reorder across the intervening
     one and change the server-side timeline).
     """
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/test/heartbeat?pulsetime=10", _heartbeat(0))
@@ -505,11 +504,11 @@ def test_dispatch_preserves_order_when_pulsetimes_differ():
     assert rq._get_next() is None
 
 
-def test_dispatch_handles_malformed_pulsetime_without_crashing():
+def test_dispatch_handles_malformed_pulsetime_without_crashing(tmp_path):
     """A malformed pulsetime must not raise inside coalescing: the request is
     sent verbatim and the rest of the queue still drains."""
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     rq.add_request("buckets/test/heartbeat?pulsetime=1..2", _heartbeat(0))
@@ -521,7 +520,7 @@ def test_dispatch_handles_malformed_pulsetime_without_crashing():
     assert rq._get_next() is None
 
 
-def test_partial_retry_does_not_replay_delivered_requests():
+def test_partial_retry_does_not_replay_delivered_requests(tmp_path):
     """
     If an earlier request in a batch is delivered and a later one hits a
     transient error, the retry must resume at the failed request instead of
@@ -540,7 +539,7 @@ def test_partial_retry_does_not_replay_delivered_requests():
             return super()._post(endpoint, data, **kwargs)
 
     client = FailSecondClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     # Different data, so these are two separate (non-mergeable) requests.
