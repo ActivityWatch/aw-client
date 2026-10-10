@@ -9,7 +9,7 @@ with confidence, and I need some of that right now.
 
 import threading
 from time import sleep
-from logging import basicConfig, DEBUG
+from logging import basicConfig, DEBUG, WARNING
 
 basicConfig(level=DEBUG)
 
@@ -149,3 +149,40 @@ def test_wait_for_queue_empty_timeout():
             rq.join()
 
     assert result is False
+
+
+def test_add_request_disk_full(caplog):
+    """Ensures that add_request doesn't crash if the queue can't be written to disk"""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+
+    def raise_oserror(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    rq._persistqueue.put = raise_oserror  # type: ignore
+
+    # Should not raise, the OSError should be caught internally and logged instead
+    with caplog.at_level(WARNING, logger="aw_client.client"):
+        assert rq.add_request("/api/0/buckets/test/heartbeat", {}) is False
+        # A sustained failure warns once, not once per heartbeat
+        assert rq.add_request("/api/0/buckets/test/heartbeat", {}) is False
+
+    warnings = [r for r in caplog.records if "Failed to queue request" in r.message]
+    assert len(warnings) == 1
+
+
+def test_add_request_sqlite_full_then_recovers(tmp_path):
+    """A real full SQLite database raises OperationalError, not OSError."""
+    client = MockClient()
+    rq = RequestQueue(client, persistqueue_path=str(tmp_path / "q"))  # type: ignore
+    putter = rq._persistqueue._putter
+    putter.execute("PRAGMA max_page_count=3")  # type: ignore
+
+    data = {"data": "x" * 500}
+    results = [rq.add_request("/api/0/buckets/test/heartbeat", data) for _ in range(20)]
+    assert results[0] is True
+    assert results[-1] is False
+
+    # Once space is available again, writes succeed
+    putter.execute("PRAGMA max_page_count=1073741823")  # type: ignore
+    assert rq.add_request("/api/0/buckets/test/heartbeat", data) is True
