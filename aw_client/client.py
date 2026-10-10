@@ -949,7 +949,9 @@ class RequestQueue(threading.Thread):
             # Any failure from here on may have happened after the server
             # stored the insert, so the retry must reconcile first.
             self._retrying_insert = is_insert
-            if data:
+            # Skip only an insert reconciled down to nothing; an empty
+            # heartbeat payload is still a request to send.
+            if data or not is_insert:
                 self.client._post(request.endpoint, data)
         except (req.exceptions.ConnectionError, req.exceptions.Timeout):
             # Triggered by:

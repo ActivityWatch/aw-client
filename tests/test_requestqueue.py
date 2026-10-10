@@ -418,14 +418,14 @@ def test_dispatch_does_not_merge_heartbeats_with_different_data(tmp_path):
     assert rq._get_next() is None
 
 
-def test_dispatch_bulk_inserts_unmergeable_backlog_in_chunks():
+def test_dispatch_bulk_inserts_unmergeable_backlog_in_chunks(tmp_path):
     """
     A backlog of events that cannot merge (e.g. changing window titles) is
     sent as heartbeat + bulk-insert chunks + heartbeat, not one request each,
     and every event arrives exactly once and in order (issue #32).
     """
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 250
@@ -448,13 +448,13 @@ def test_dispatch_bulk_inserts_unmergeable_backlog_in_chunks():
     assert rq._get_next() is None
 
 
-def test_dispatch_short_run_stays_heartbeats():
+def test_dispatch_short_run_stays_heartbeats(tmp_path):
     """
     If the whole run fits within pulsetime, the last heartbeat could merge
     into a stale cached event on aw-server (Python), so no insert is used.
     """
     client = RecordingClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     for i in range(4):
@@ -473,13 +473,13 @@ def test_dispatch_short_run_stays_heartbeats():
     "exc",
     [requests.exceptions.Timeout(), requests.exceptions.ConnectionError()],
 )
-def test_insert_retry_after_lost_response_does_not_duplicate(exc):
+def test_insert_retry_after_lost_response_does_not_duplicate(exc, tmp_path):
     """
     A bulk insert is not idempotent. If it reached the server but the
     response was lost, the retry must not insert the events a second time.
     """
     client = StoringClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 20
@@ -501,10 +501,10 @@ def test_insert_retry_after_lost_response_does_not_duplicate(exc):
     assert rq._get_next() is None
 
 
-def test_insert_retry_resends_when_nothing_was_stored():
+def test_insert_retry_resends_when_nothing_was_stored(tmp_path):
     """A failed insert that never reached the server is resent in full."""
     client = StoringClient()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 20
@@ -520,9 +520,9 @@ def test_insert_retry_resends_when_nothing_was_stored():
     def refuse(endpoint, data, **kwargs):
         raise requests.exceptions.ConnectionError()
 
-    client._post = refuse
+    client._post = refuse  # type: ignore[method-assign]
     rq._dispatch_request()  # insert refused before reaching the server
-    client._post = real_post
+    client._post = real_post  # type: ignore[method-assign]
 
     _drain(rq)
 
@@ -531,7 +531,7 @@ def test_insert_retry_resends_when_nothing_was_stored():
     assert rq._get_next() is None
 
 
-def test_dispatch_batches_across_buckets():
+def test_dispatch_batches_across_buckets(tmp_path):
     """Interleaved buckets are grouped, so each bucket drains in one request."""
     client = RecordingClient()
     rq = _fresh_queue(client, tmp_path)
@@ -720,7 +720,7 @@ def test_partial_retry_does_not_replay_delivered_requests(tmp_path):
     assert rq._get_next() is None
 
 
-def test_rejected_insert_chunk_only_drops_the_bad_event():
+def test_rejected_insert_chunk_only_drops_the_bad_event(tmp_path):
     """A 400 on a bulk insert must not drop the valid events in the chunk."""
 
     class RejectsBadEvent(StoringClient):
@@ -733,7 +733,7 @@ def test_rejected_insert_chunk_only_drops_the_bad_event():
             return super()._post(endpoint, data, **kwargs)
 
     client = RejectsBadEvent()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     titles = [f"window-{i}" for i in range(10)]
@@ -761,11 +761,11 @@ class _ToggleReadDenied(StoringClient):
         return super().get_events(*args, **kwargs)
 
 
-def test_failed_reconcile_read_does_not_duplicate_a_delivered_insert():
+def test_failed_reconcile_read_does_not_duplicate_a_delivered_insert(tmp_path):
     """An unreadable pre-retry lookup must not blind-resend a chunk that may
     already be stored. Keep the request queued and reconcile on a later try."""
     client = _ToggleReadDenied()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 10
@@ -789,17 +789,15 @@ def test_failed_reconcile_read_does_not_duplicate_a_delivered_insert():
     client.deny_reads = False
     _drain(rq)
 
-    assert [e.data["title"] for e in client.stored] == [
-        f"window-{i}" for i in range(n)
-    ]
+    assert [e.data["title"] for e in client.stored] == [f"window-{i}" for i in range(n)]
     assert rq._get_next() is None
 
 
-def test_failed_reconcile_read_does_not_drop_an_undelivered_insert():
+def test_failed_reconcile_read_does_not_drop_an_undelivered_insert(tmp_path):
     """An unreadable pre-retry lookup must not discard events that were never
     stored either: defer the chunk until the lookup succeeds."""
     client = _ToggleReadDenied()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 10
@@ -815,9 +813,9 @@ def test_failed_reconcile_read_does_not_drop_an_undelivered_insert():
     def refuse(endpoint, data, **kwargs):
         raise requests.exceptions.ConnectionError()
 
-    client._post = refuse
+    client._post = refuse  # type: ignore[method-assign]
     rq._dispatch_request()  # insert never reaches the server
-    client._post = real_post
+    client._post = real_post  # type: ignore[method-assign]
 
     client.deny_reads = True
     rq._dispatch_request()  # lookup denied -> defer, must not drop
@@ -826,18 +824,16 @@ def test_failed_reconcile_read_does_not_drop_an_undelivered_insert():
     client.deny_reads = False
     _drain(rq)
 
-    assert [e.data["title"] for e in client.stored] == [
-        f"window-{i}" for i in range(n)
-    ]
+    assert [e.data["title"] for e in client.stored] == [f"window-{i}" for i in range(n)]
     assert rq._get_next() is None
 
 
-def test_permanently_unreadable_lookup_does_not_block_the_queue():
+def test_permanently_unreadable_lookup_does_not_block_the_queue(tmp_path):
     """A lookup that never recovers must not stall the queue forever. A retried
     insert (attempted, response lost) is assumed delivered: no duplicate, and
     the last heartbeat still goes out."""
     client = _ToggleReadDenied()
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 10
@@ -860,13 +856,13 @@ def test_permanently_unreadable_lookup_does_not_block_the_queue():
     assert rq._get_next() is None, "the queue must drain despite the dead lookup"
 
 
-def test_permanently_unreadable_lookup_still_sends_a_never_attempted_insert():
+def test_permanently_unreadable_lookup_still_sends_a_never_attempted_insert(tmp_path):
     """If no insert was attempted this run, an unreadable lookup must not
     discard the chunk: after the bounded retries it is sent, and the queue
     drains."""
     client = _ToggleReadDenied()
     client.deny_reads = True
-    rq = _fresh_queue(client)
+    rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
     n = 10
@@ -879,7 +875,5 @@ def test_permanently_unreadable_lookup_still_sends_a_never_attempted_insert():
     rq._dispatch_request()  # first event, heartbeat
     _drain(rq)  # insert never attempted -> sent despite the unreadable lookup
 
-    assert [e.data["title"] for e in client.stored] == [
-        f"window-{i}" for i in range(n)
-    ]
+    assert [e.data["title"] for e in client.stored] == [f"window-{i}" for i in range(n)]
     assert rq._get_next() is None
