@@ -650,13 +650,13 @@ class RequestQueue(threading.Thread):
         # dropping them. A single task_done() deletes every row <= the cursor,
         # i.e. the whole batch, so no per-item bookkeeping is needed.
         self._current_batch = []  # type: List[QueuedRequest]
-        self._queue_write_failing = False
         # `_current_batch` after coalescing, plus how many of those have been
         # handled. Dispatching one coalesced request per call means a transient
         # error retries only the failed request - never replays ones that
         # already reached the server - and lets the run loop observe stop().
         self._coalesced_batch = []  # type: List[QueuedRequest]
         self._coalesced_index = 0
+        self._queue_write_failing = False
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # Returns the head of the in-flight batch, otherwise pops a single
