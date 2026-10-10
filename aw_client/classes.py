@@ -10,6 +10,8 @@ from typing import (
     Any,
     Dict,
     List,
+    Optional,
+    Protocol,
     Tuple,
 )
 
@@ -19,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 CategoryId = List[str]
 CategorySpec = Dict[str, Any]
+
+
+class SettingsClient(Protocol):
+    def get_setting(self, key: str) -> Any: ...
+
 
 default_classes: List[Tuple[CategoryId, CategorySpec]] = [
     (["Work"], {"type": "regex", "regex": "Google Docs|libreoffice|ReText"}),
@@ -65,14 +72,18 @@ default_classes: List[Tuple[CategoryId, CategorySpec]] = [
 ]
 
 
-def get_classes() -> List[Tuple[List[str], dict]]:
+def get_classes(
+    client: Optional[SettingsClient] = None,
+) -> List[Tuple[List[str], dict]]:
     """
     Get classes from server-side settings.
     Might throw a 404 if not set yet, in which case we use the default classes as a fallback.
     """
-    # NOTE: Always tries to fetch from prod server,
-    #       which is potentially wrong if testing server is being used.
-    awc = aw_client.ActivityWatchClient(f"get-setting-{random.randint(0, 10000)}")
+    # Reuse the caller's client when available so host, port, testing mode, and
+    # authentication settings stay consistent with the query being performed.
+    awc = client or aw_client.ActivityWatchClient(
+        f"get-setting-{random.randint(0, 10000)}"
+    )
     try:
         classes = awc.get_setting("classes")
     except Exception:
