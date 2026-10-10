@@ -4,14 +4,16 @@ import json
 import logging
 import os
 import socket
+import sqlite3
 import threading
 import warnings
-from collections import namedtuple
+from collections import deque, namedtuple
 from datetime import datetime
 from time import sleep
 from typing import (
     Any,
     Callable,
+    Deque,
     Dict,
     List,
     Optional,
@@ -35,6 +37,9 @@ from .profile import (
     resolve_profile,
 )
 from .singleinstance import SingleInstance
+
+# Per-bucket cap on heartbeats held in memory while queue writes fail (e.g. disk full)
+_MAX_UNQUEUED_HEARTBEATS = 1000
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -157,6 +162,10 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
+        # Committed heartbeats whose queue write failed, retried in order before the next commit.
+        # Bounded so a sustained failure can't grow memory without limit; the oldest are dropped.
+        self._unqueued_heartbeats = {}  # type: Dict[str, Deque[Tuple[str, dict]]]
+        self._dropped_heartbeats = {}  # type: Dict[str, int]
         self._warned_queue_before_connect = False
 
     #
@@ -336,16 +345,45 @@ class ActivityWatchClient:
                 diff = (last_heartbeat.duration).total_seconds()
                 if diff >= _commit_interval:
                     data = merge.to_json_dict()
-                    self.request_queue.add_request(endpoint, data)
-                    self.last_heartbeat[bucket_id] = event
+                    if self._queue_heartbeat(bucket_id, endpoint, data):
+                        self.last_heartbeat[bucket_id] = event
+                    else:
+                        # Keep the merged interval pending; the next heartbeat retries it.
+                        self.last_heartbeat[bucket_id] = merge
                 else:
                     self.last_heartbeat[bucket_id] = merge
             else:
                 data = last_heartbeat.to_json_dict()
-                self.request_queue.add_request(endpoint, data)
+                if not self._queue_heartbeat(bucket_id, endpoint, data):
+                    # Can't merge with the new event, so hold the old one for retry.
+                    unqueued = self._unqueued_heartbeats.setdefault(
+                        bucket_id, deque(maxlen=_MAX_UNQUEUED_HEARTBEATS)
+                    )
+                    if len(unqueued) == unqueued.maxlen:
+                        dropped = self._dropped_heartbeats.get(bucket_id, 0)
+                        if not dropped:
+                            logger.warning(
+                                f"Unqueued heartbeat buffer for {bucket_id} is full, dropping oldest heartbeats"
+                            )
+                        self._dropped_heartbeats[bucket_id] = dropped + 1
+                    unqueued.append((endpoint, data))
                 self.last_heartbeat[bucket_id] = event
         else:
             self._post(endpoint, event.to_json_dict())
+
+    def _queue_heartbeat(self, bucket_id: str, endpoint: str, data: dict) -> bool:
+        """Queue a heartbeat after any earlier ones that failed to queue, preserving order."""
+        unqueued = self._unqueued_heartbeats.get(bucket_id, deque())
+        while unqueued:
+            if not self.request_queue.add_request(*unqueued[0]):
+                return False
+            unqueued.popleft()
+        dropped = self._dropped_heartbeats.pop(bucket_id, 0)
+        if dropped:
+            logger.warning(
+                f"Dropped {dropped} heartbeats for {bucket_id} while the queue was unwritable"
+            )
+        return self.request_queue.add_request(endpoint, data)
 
     #
     #   Bucket get/post requests
@@ -546,6 +584,7 @@ class RequestQueue(threading.Thread):
             persistqueue_path, multithreading=True, auto_commit=False
         )
         self._current = None  # type: Optional[QueuedRequest]
+        self._queue_write_failing = False
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # self._current will always hold the next not-yet-sent event,
@@ -646,14 +685,32 @@ class RequestQueue(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
-    def add_request(self, endpoint: str, data: dict) -> None:
+    def add_request(self, endpoint: str, data: dict) -> bool:
         """
         Add a request to the queue.
+        Returns False if the request could not be persisted (e.g. disk full),
+        so the caller can keep it pending and retry.
         NOTE: Only supports heartbeats
         """
         assert "/heartbeat" in endpoint
         assert isinstance(data, dict)
-        self._persistqueue.put(QueuedRequest(endpoint, data))
+        try:
+            self._persistqueue.put(QueuedRequest(endpoint, data))
+        # SQLite reports a full disk as OperationalError, not OSError
+        except (OSError, sqlite3.OperationalError) as e:
+            # Warn once per failure streak to avoid flooding logs on a full disk.
+            if not self._queue_write_failing:
+                logger.warning(
+                    f"Failed to queue request, possibly due to insufficient disk space: {e}"
+                )
+                self._queue_write_failing = True
+            else:
+                logger.debug(f"Failed to queue request (still failing): {e}")
+            return False
+        if self._queue_write_failing:
+            logger.info("Queueing requests succeeded again")
+            self._queue_write_failing = False
+        return True
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)
