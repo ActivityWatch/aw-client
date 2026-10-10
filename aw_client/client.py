@@ -9,7 +9,7 @@ import threading
 import warnings
 from collections import deque, namedtuple
 from datetime import datetime
-from time import sleep
+from time import monotonic, sleep
 from typing import (
     Any,
     Callable,
@@ -528,6 +528,10 @@ class ActivityWatchClient:
         )
         self._warned_queue_before_connect = True
 
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """Wait for all queued requests to be sent. See RequestQueue.wait_for_queue_empty."""
+        return self.request_queue.wait_for_queue_empty(timeout=timeout)
+
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
@@ -621,6 +625,29 @@ class RequestQueue(threading.Thread):
 
     def should_stop(self) -> bool:
         return self._stop_event.is_set()
+
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """
+        Wait until the queue is empty, or until timeout (in seconds) is reached.
+
+        If the queue thread isn't running nothing can be flushed, so only return
+        True when the queue is genuinely empty; requests still pending (e.g. queued
+        before connect()) return False.
+
+        :param timeout: max time to wait, in seconds. Waits indefinitely if None.
+        :return: True if the queue became empty, False if the timeout was reached.
+        """
+        if not self.is_alive():
+            return self._persistqueue.qsize() == 0 and self._current is None
+
+        start_time = monotonic()
+        while self._persistqueue.qsize() > 0 or self._current is not None:
+            if timeout is not None and monotonic() - start_time >= timeout:
+                return False
+            if self.wait(0.1):
+                # stop() was called while waiting
+                return False
+        return True
 
     def _dispatch_request(self) -> None:
         request = self._get_next()
