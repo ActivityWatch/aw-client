@@ -1,16 +1,19 @@
 import functools
+import ipaddress
 import json
 import logging
 import os
 import socket
+import sqlite3
 import threading
 import warnings
-from collections import namedtuple
+from collections import deque, namedtuple
 from datetime import datetime
-from time import sleep
+from time import monotonic, sleep
 from typing import (
     Any,
     Callable,
+    Deque,
     Dict,
     List,
     Optional,
@@ -25,7 +28,18 @@ from aw_core.models import Event
 from aw_transform.heartbeats import heartbeat_merge
 
 from .config import load_config, load_local_server_api_key
+from .profile import (
+    DEFAULT_PROFILE,
+    export_profile,
+    is_testing,
+    profile_from_env,
+    profile_suffix,
+    resolve_profile,
+)
 from .singleinstance import SingleInstance
+
+# Per-bucket cap on heartbeats held in memory while queue writes fail (e.g. disk full)
+_MAX_UNQUEUED_HEARTBEATS = 1000
 
 # FIXME: This line is probably badly placed
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -39,6 +53,22 @@ def _log_request_exception(e: req.RequestException):
         logger.warning(f"Error message received: {d}")
     except json.JSONDecodeError:
         pass
+
+
+# Explicit None entries override proxies from the environment (HTTP_PROXY,
+# HTTPS_PROXY, ALL_PROXY) for a single request, see requests' merge_setting.
+_NO_PROXIES: Dict[str, Any] = {"http": None, "https": None, "all": None}
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True if ``host`` names the local machine (localhost, 127.0.0.0/8, ::1)."""
+    host = str(host).strip("[]").rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _dt_is_tzaware(dt: datetime) -> bool:
@@ -67,6 +97,7 @@ class ActivityWatchClient:
         host=None,
         port=None,
         protocol="http",
+        profile: Optional[str] = None,
     ) -> None:
         """
         A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
@@ -77,20 +108,50 @@ class ActivityWatchClient:
 
         .. literalinclude:: examples/client.py
             :lines: 7-
+
+        ``profile`` selects an isolated instance (config, port, queue file).
+        ``testing=True`` is the compat shim for ``profile="testing"``. If
+        neither is set, ``AW_PROFILE`` from the launcher is used.
         """
-        self.testing = testing
+        if profile is not None or testing:
+            resolved = resolve_profile(profile, testing)
+        else:
+            resolved = profile_from_env(False)
+        export_profile(resolved)
+        self.profile = resolved
+        self.testing = is_testing(resolved)
 
         self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
         _config = load_config()
-        server_config = _config["server" if not testing else "server-testing"]
-        client_config = _config["client" if not testing else "client-testing"]
+        server_key = "server" if resolved == DEFAULT_PROFILE else f"server-{resolved}"
+        client_key = "client" if resolved == DEFAULT_PROFILE else f"client-{resolved}"
+        if server_key not in _config:
+            if resolved != DEFAULT_PROFILE:
+                logger.warning(
+                    "Profile %s has no [%s] section, falling back to [server] "
+                    "(port %s may collide with the default instance)",
+                    resolved,
+                    server_key,
+                    5666 if is_testing(resolved) else 5600,
+                )
+            server_key = "server"
+        if client_key not in _config:
+            client_key = "client"
+        server_config = _config[server_key]
+        client_config = _config[client_key]
 
         server_host = host or server_config["hostname"]
         server_port = port or server_config["port"]
-        self.server_api_key = load_local_server_api_key(str(server_host), server_port)
+        self.server_api_key = load_local_server_api_key(
+            str(server_host), server_port, profile=resolved
+        )
         self.server_address = f"{protocol}://{server_host}:{server_port}"
+        # A local server must never be reached through a system proxy: NO_PROXY
+        # often lists "localhost" but not "127.0.0.1", which sends every request
+        # to the proxy and fails (#41). Remote servers keep honoring the env.
+        self._proxies = _NO_PROXIES if _is_loopback_host(server_host) else None
 
         self.instance = SingleInstance(
             f"{self.client_name}-at-{server_host}-on-{server_port}"
@@ -101,6 +162,10 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
+        # Committed heartbeats whose queue write failed, retried in order before the next commit.
+        # Bounded so a sustained failure can't grow memory without limit; the oldest are dropped.
+        self._unqueued_heartbeats = {}  # type: Dict[str, Deque[Tuple[str, dict]]]
+        self._dropped_heartbeats = {}  # type: Dict[str, int]
         self._warned_queue_before_connect = False
 
     #
@@ -118,7 +183,12 @@ class ActivityWatchClient:
 
     @always_raise_for_request_errors
     def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
-        return req.get(self._url(endpoint), params=params, headers=self._headers())
+        return req.get(
+            self._url(endpoint),
+            params=params,
+            headers=self._headers(),
+            proxies=self._proxies,
+        )
 
     @always_raise_for_request_errors
     def _post(
@@ -135,6 +205,7 @@ class ActivityWatchClient:
             data=bytes(json.dumps(data), "utf8"),
             headers=headers,
             params=params,
+            proxies=self._proxies,
         )
 
     @always_raise_for_request_errors
@@ -142,7 +213,12 @@ class ActivityWatchClient:
         if data is None:
             data = {}
         headers = self._headers({"Content-type": "application/json"})
-        return req.delete(self._url(endpoint), data=json.dumps(data), headers=headers)
+        return req.delete(
+            self._url(endpoint),
+            data=json.dumps(data),
+            headers=headers,
+            proxies=self._proxies,
+        )
 
     def get_info(self):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
@@ -269,16 +345,45 @@ class ActivityWatchClient:
                 diff = (last_heartbeat.duration).total_seconds()
                 if diff >= _commit_interval:
                     data = merge.to_json_dict()
-                    self.request_queue.add_request(endpoint, data)
-                    self.last_heartbeat[bucket_id] = event
+                    if self._queue_heartbeat(bucket_id, endpoint, data):
+                        self.last_heartbeat[bucket_id] = event
+                    else:
+                        # Keep the merged interval pending; the next heartbeat retries it.
+                        self.last_heartbeat[bucket_id] = merge
                 else:
                     self.last_heartbeat[bucket_id] = merge
             else:
                 data = last_heartbeat.to_json_dict()
-                self.request_queue.add_request(endpoint, data)
+                if not self._queue_heartbeat(bucket_id, endpoint, data):
+                    # Can't merge with the new event, so hold the old one for retry.
+                    unqueued = self._unqueued_heartbeats.setdefault(
+                        bucket_id, deque(maxlen=_MAX_UNQUEUED_HEARTBEATS)
+                    )
+                    if len(unqueued) == unqueued.maxlen:
+                        dropped = self._dropped_heartbeats.get(bucket_id, 0)
+                        if not dropped:
+                            logger.warning(
+                                f"Unqueued heartbeat buffer for {bucket_id} is full, dropping oldest heartbeats"
+                            )
+                        self._dropped_heartbeats[bucket_id] = dropped + 1
+                    unqueued.append((endpoint, data))
                 self.last_heartbeat[bucket_id] = event
         else:
             self._post(endpoint, event.to_json_dict())
+
+    def _queue_heartbeat(self, bucket_id: str, endpoint: str, data: dict) -> bool:
+        """Queue a heartbeat after any earlier ones that failed to queue, preserving order."""
+        unqueued = self._unqueued_heartbeats.get(bucket_id, deque())
+        while unqueued:
+            if not self.request_queue.add_request(*unqueued[0]):
+                return False
+            unqueued.popleft()
+        dropped = self._dropped_heartbeats.pop(bucket_id, 0)
+        if dropped:
+            logger.warning(
+                f"Dropped {dropped} heartbeats for {bucket_id} while the queue was unwritable"
+            )
+        return self.request_queue.add_request(endpoint, data)
 
     #
     #   Bucket get/post requests
@@ -391,7 +496,9 @@ class ActivityWatchClient:
         self.request_queue.join()
 
         # Throw away old thread object, create new one since same thread cannot be started twice
-        self.request_queue = RequestQueue(self)
+        self.request_queue = RequestQueue(
+            self, persistqueue_path=self.request_queue.persistqueue_path
+        )
         # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
         self._warned_queue_before_connect = False
 
@@ -421,9 +528,28 @@ class ActivityWatchClient:
         )
         self._warned_queue_before_connect = True
 
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """Wait for all queued requests to be sent. See RequestQueue.wait_for_queue_empty."""
+        return self.request_queue.wait_for_queue_empty(timeout=timeout)
+
 
 QueuedRequest = namedtuple("QueuedRequest", ["endpoint", "data"])
 Bucket = namedtuple("Bucket", ["id", "type"])
+
+# Bounds for the delay before retrying a queued request after a
+# transient server error (e.g. 429/503), honoring Retry-After if given.
+RETRY_DELAY_DEFAULT = 0.5
+RETRY_DELAY_MAX = 60.0
+
+
+def _retry_delay(response: req.Response) -> float:
+    """Delay before retrying, honoring the Retry-After header (delta-seconds
+    form) if present and sane; the HTTP-date form falls back to the default."""
+    try:
+        delay = float(response.headers.get("Retry-After", RETRY_DELAY_DEFAULT))
+    except ValueError:
+        return RETRY_DELAY_DEFAULT
+    return max(RETRY_DELAY_DEFAULT, min(delay, RETRY_DELAY_MAX))
 
 
 class RequestQueue(threading.Thread):
@@ -436,7 +562,16 @@ class RequestQueue(threading.Thread):
 
     VERSION = 1  # update this whenever the queue-file format changes
 
-    def __init__(self, client: ActivityWatchClient) -> None:
+    # HTTP statuses that indicate a transient server-side problem, for which
+    # requests are kept in the queue and retried (dropped on anything else).
+    # 503 in particular is sent by aw-server when the heartbeat lock times out.
+    RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+    def __init__(
+        self,
+        client: ActivityWatchClient,
+        persistqueue_path: Optional[str] = None,
+    ) -> None:
         threading.Thread.__init__(self, daemon=True)
 
         self.client = client
@@ -449,27 +584,31 @@ class RequestQueue(threading.Thread):
 
         self._attempt_reconnect_interval = 10
 
-        # Setup failed queues file
-        data_dir = get_data_dir("aw-client")
-        queued_dir = os.path.join(data_dir, "queued")
-        if not os.path.exists(queued_dir):
-            os.makedirs(queued_dir)
+        if persistqueue_path is None:
+            data_dir = get_data_dir("aw-client")
+            queued_dir = os.path.join(data_dir, "queued")
+            if not os.path.exists(queued_dir):
+                os.makedirs(queued_dir)
 
-        persistqueue_path = os.path.join(
-            queued_dir,
-            "{}{}.v{}.persistqueue".format(
-                self.client.client_name,
-                "-testing" if client.testing else "",
-                self.VERSION,
-            ),
-        )
+            profile = getattr(client, "profile", None)
+            suffix = (
+                profile_suffix(profile)
+                if profile is not None
+                else ("-testing" if client.testing else "")
+            )
+            persistqueue_path = os.path.join(
+                queued_dir,
+                f"{self.client.client_name}{suffix}.v{self.VERSION}.persistqueue",
+            )
 
         logger.debug(f"queue path '{persistqueue_path}'")
+        self.persistqueue_path = persistqueue_path
 
         self._persistqueue = persistqueue.FIFOSQLiteQueue(
             persistqueue_path, multithreading=True, auto_commit=False
         )
         self._current = None  # type: Optional[QueuedRequest]
+        self._queue_write_failing = False
 
     def _get_next(self) -> Optional[QueuedRequest]:
         # self._current will always hold the next not-yet-sent event,
@@ -507,6 +646,29 @@ class RequestQueue(threading.Thread):
     def should_stop(self) -> bool:
         return self._stop_event.is_set()
 
+    def wait_for_queue_empty(self, timeout: Optional[float] = None) -> bool:
+        """
+        Wait until the queue is empty, or until timeout (in seconds) is reached.
+
+        If the queue thread isn't running nothing can be flushed, so only return
+        True when the queue is genuinely empty; requests still pending (e.g. queued
+        before connect()) return False.
+
+        :param timeout: max time to wait, in seconds. Waits indefinitely if None.
+        :return: True if the queue became empty, False if the timeout was reached.
+        """
+        if not self.is_alive():
+            return self._persistqueue.qsize() == 0 and self._current is None
+
+        start_time = monotonic()
+        while self._persistqueue.qsize() > 0 or self._current is not None:
+            if timeout is not None and monotonic() - start_time >= timeout:
+                return False
+            if self.wait(0.1):
+                # stop() was called while waiting
+                return False
+        return True
+
     def _dispatch_request(self) -> None:
         request = self._get_next()
         if not request:
@@ -515,13 +677,12 @@ class RequestQueue(threading.Thread):
 
         try:
             self.client._post(request.endpoint, request.data)
-        except req.exceptions.ConnectTimeout:
+        except (req.exceptions.ConnectionError, req.exceptions.Timeout):
             # Triggered by:
             #   - server not running (connection refused)
             #   - server not responding (timeout)
-            # Safe to retry according to requests docs:
-            #   https://requests.readthedocs.io/en/latest/api/#requests.ConnectTimeout
-
+            # Keep the request in the queue and go back to waiting for the
+            # server to become available (the run loop reconnects).
             self.connected = False
             logger.warning(
                 "Connection refused or timeout, will queue requests until connection is available."
@@ -532,20 +693,32 @@ class RequestQueue(threading.Thread):
             sleep(0.5)
             return
         except req.RequestException as e:
-            if e.response and e.response.status_code == 400:
-                # HTTP 400 - Bad request
-                # Example case: https://github.com/ActivityWatch/activitywatch/issues/815
-                # We don't want to retry, because a bad payload is likely to fail forever.
-                logger.error(f"Bad request, not retrying: {request.data}")
-            elif e.response and e.response.status_code == 500:
-                # HTTP 500 - Internal server error
-                # It is possible that the server is in a bad state (and will recover on restart),
-                # in which case we want to retry. I hope this can never caused by a bad payload.
-                logger.error(f"Internal server error, retrying: {request.data}")
-                sleep(0.5)
+            # NOTE: `e.response is not None` matters: Response.__bool__ is
+            # False for any non-2xx status, so a plain `if e.response` never
+            # matches an error response.
+            response = e.response
+            status_code = response.status_code if response is not None else None
+            if response is not None and status_code in self.RETRY_STATUS_CODES:
+                # Transient server-side problem (busy, overloaded, restarting
+                # or behind a flaky proxy) - the request itself is likely
+                # fine, so keep it in the queue and retry. Heartbeats are safe
+                # to replay: a duplicate of an already-processed heartbeat
+                # merges into the last event as a no-op.
+                delay = _retry_delay(response)
+                logger.warning(
+                    f"Server error {status_code}, will retry in {delay}s: {request.endpoint}"
+                )
+                # stop-aware wait, so a long Retry-After can't block shutdown
+                self.wait(delay)
                 return
             else:
-                logger.exception(f"Unknown error, not retrying: {request.data}")
+                # Client errors (e.g. HTTP 400 - bad request, see
+                # https://github.com/ActivityWatch/activitywatch/issues/815)
+                # are likely to fail forever, so drop the request instead of
+                # blocking the queue.
+                logger.exception(
+                    f"Request failed ({status_code}), not retrying: {request.data}"
+                )
         except Exception:
             logger.exception(f"Unknown error, not retrying: {request.data}")
 
@@ -570,14 +743,32 @@ class RequestQueue(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
-    def add_request(self, endpoint: str, data: dict) -> None:
+    def add_request(self, endpoint: str, data: dict) -> bool:
         """
         Add a request to the queue.
+        Returns False if the request could not be persisted (e.g. disk full),
+        so the caller can keep it pending and retry.
         NOTE: Only supports heartbeats
         """
         assert "/heartbeat" in endpoint
         assert isinstance(data, dict)
-        self._persistqueue.put(QueuedRequest(endpoint, data))
+        try:
+            self._persistqueue.put(QueuedRequest(endpoint, data))
+        # SQLite reports a full disk as OperationalError, not OSError
+        except (OSError, sqlite3.OperationalError) as e:
+            # Warn once per failure streak to avoid flooding logs on a full disk.
+            if not self._queue_write_failing:
+                logger.warning(
+                    f"Failed to queue request, possibly due to insufficient disk space: {e}"
+                )
+                self._queue_write_failing = True
+            else:
+                logger.debug(f"Failed to queue request (still failing): {e}")
+            return False
+        if self._queue_write_failing:
+            logger.info("Queueing requests succeeded again")
+            self._queue_write_failing = False
+        return True
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)

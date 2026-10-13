@@ -38,8 +38,9 @@ class _Context:
 )
 @click.option(
     "--port",
-    default=5600,
-    help="Port to use",
+    default=None,
+    type=int,
+    help="Port to use (default: profile config, 5600 / 5666)",
 )
 @click.option(
     "-v",
@@ -48,13 +49,24 @@ class _Context:
     help="Verbosity",
 )
 @click.option("--testing", is_flag=True, help="Set to use testing ports by default")
+@click.option(
+    "--profile",
+    default=None,
+    help="Named instance profile. --testing is an alias for --profile testing.",
+)
 @click.pass_context
-def main(ctx, testing: bool, verbose: bool, host: str, port: int):
+def main(
+    ctx, testing: bool, verbose: bool, host: str, port: int, profile: Optional[str]
+):
     ctx.obj = _Context()
+    # default=None so `--port 5600` is a real override, not discarded as
+    # "the Click default". None lets ActivityWatchClient read the profile
+    # config (5600 / 5666 / baked research port).
     ctx.obj.client = aw_client.ActivityWatchClient(
         host=host,
-        port=port if port != 5600 else (5666 if testing else 5600),
+        port=port,
         testing=testing,
+        profile=profile,
     )
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
 

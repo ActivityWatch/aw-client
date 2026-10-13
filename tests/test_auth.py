@@ -23,7 +23,18 @@ def write_server_config(tmp_path, filename: str, content: str) -> None:
 
 
 def test_load_local_server_api_key_matches_port(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "aw_client.config._user_config_dir",
+        lambda appname: str(tmp_path / appname),
+    )
+    monkeypatch.setattr(
+        "aw_client.config._user_data_dir",
+        lambda appname: str(tmp_path / "data" / appname),
+    )
+    monkeypatch.setattr(
+        "aw_client.config._user_cache_dir",
+        lambda appname: str(tmp_path / "cache" / appname),
+    )
     write_server_config(
         tmp_path,
         "config.toml",
@@ -36,10 +47,15 @@ def test_load_local_server_api_key_matches_port(tmp_path, monkeypatch):
     )
 
     assert load_local_server_api_key("127.0.0.1", 5601) == "secret123"
-    assert load_local_server_api_key("localhost", "5666") == "testing-secret"
+    assert (
+        load_local_server_api_key("localhost", "5666", profile="testing")
+        == "testing-secret"
+    )
     assert load_local_server_api_key("::1", 5601) == "secret123"
     assert load_local_server_api_key("127.0.0.1", 5600) is None
     assert load_local_server_api_key("example.com", 5601) is None
+    # Default profile must not pick up the testing server's key.
+    assert load_local_server_api_key("localhost", "5666") is None
 
 
 def test_client_sends_authorization_header_for_local_server(tmp_path, monkeypatch):
@@ -53,7 +69,7 @@ def test_client_sends_authorization_header_for_local_server(tmp_path, monkeypatc
 
     captured = {}
 
-    def fake_get(url, params=None, headers=None):
+    def fake_get(url, params=None, headers=None, **kwargs):
         captured["url"] = url
         captured["headers"] = headers
         return DummyResponse({"hostname": "test-host", "testing": False})
@@ -77,7 +93,7 @@ def test_client_skips_authorization_header_for_remote_server(tmp_path, monkeypat
 
     captured = {}
 
-    def fake_get(url, params=None, headers=None):
+    def fake_get(url, params=None, headers=None, **kwargs):
         captured["headers"] = headers
         return DummyResponse({"hostname": "remote-host", "testing": False})
 
