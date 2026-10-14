@@ -14,7 +14,17 @@ class DummyResponse:
 
 
 def test_delete_events_posts_ids_and_returns_count(monkeypatch):
+    # Keep this HTTP-only test off the user's config, lock and queue files.
+    monkeypatch.setattr(
+        client_module,
+        "load_config",
+        lambda: {
+            "server": {"hostname": "127.0.0.1", "port": 5600},
+            "client": {"commit_interval": 10},
+        },
+    )
     monkeypatch.setattr(client_module, "SingleInstance", lambda name: object())
+    monkeypatch.setattr(client_module, "RequestQueue", lambda client: object())
     monkeypatch.setattr(
         client_module, "load_local_server_api_key", lambda *a, **kw: None
     )
