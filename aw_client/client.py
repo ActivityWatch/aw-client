@@ -2,6 +2,7 @@ import functools
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -14,7 +15,7 @@ from time import monotonic, sleep
 from typing import (
     Any,
     Callable,
-    Deque,
+    Deque,  # noqa: F401 - used in a type comment
     Dict,
     List,
     Optional,
@@ -556,7 +557,7 @@ def _retry_delay(response: req.Response) -> float:
 # Matches the endpoint the queue stores heartbeats under, capturing the bucket
 # id and the pulsetime needed to merge consecutive queued heartbeats.
 _HEARTBEAT_ENDPOINT_RE = re.compile(
-    r"^buckets/(?P<bucket_id>.+)/heartbeat\?pulsetime=(?P<pulsetime>[0-9]+(?:\.[0-9]+)?)$"
+    r"^buckets/(?P<bucket_id>.+)/heartbeat\?pulsetime=(?P<pulsetime>[^&]*)$"
 )
 
 
@@ -573,6 +574,8 @@ def _parse_heartbeat_endpoint(endpoint: str) -> Optional[Tuple[str, float]]:
         pulsetime = float(match.group("pulsetime"))
     except ValueError:
         return None
+    if not math.isfinite(pulsetime) or pulsetime < 0:
+        return None
     return match.group("bucket_id"), pulsetime
 
 
@@ -582,7 +585,7 @@ def _try_event(data: Any) -> Optional[Event]:
         return None
     try:
         return Event(**data)
-    except TypeError:
+    except (TypeError, ValueError, OverflowError, AttributeError):
         return None
 
 
@@ -751,8 +754,10 @@ class RequestQueue(threading.Thread):
         """
         groups = {}  # type: Dict[str, List[QueuedRequest]]
         for request in batch:
-            parsed = _parse_heartbeat_endpoint(request.endpoint)
-            key = parsed[0] if parsed is not None else request.endpoint
+            # Bucket identity does not depend on whether pulsetime is valid:
+            # an unmergeable request must still interrupt that bucket's run.
+            match = _HEARTBEAT_ENDPOINT_RE.match(request.endpoint)
+            key = match.group("bucket_id") if match is not None else request.endpoint
             groups.setdefault(key, []).append(request)
 
         coalesced = []  # type: List[QueuedRequest]
