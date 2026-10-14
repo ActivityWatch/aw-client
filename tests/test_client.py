@@ -61,9 +61,12 @@ def test_full():
         fetched_events = client.get_events(bucket_name, limit=len(events))
 
         # Assert events
-        assert [(e.timestamp, e.duration, e.data) for e in fetched_events] == [
-            (e.timestamp, e.duration, e.data) for e in events
-        ]
+        # Compare as sets: events created in the same millisecond share a
+        # timestamp, so the server's tie order is unspecified.
+        def key(e):
+            return (e.timestamp, e.duration, e.data["label"])
+
+        assert sorted(map(key, fetched_events)) == sorted(map(key, events))
 
         # Check eventcount
         eventcount = client.get_eventcount(bucket_name)
@@ -101,7 +104,7 @@ def test_full():
         ]
 
         e_del_fetched = [e for e in fetched_events if e.data == e_del.data][0]
-        client.delete_event(bucket_name, e_del_fetched)
+        client.delete_event(bucket_name, e_del_fetched.id)
         fetched_events = client.get_events(bucket_name)
         assert (e_del.timestamp, e_del.duration, e_del.data) not in [
             (e.timestamp, e.duration, e.data) for e in fetched_events

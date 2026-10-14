@@ -239,7 +239,7 @@ class ActivityWatchClient:
             event = self._get(endpoint).json()
             return Event(**event)
         except req.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 return None
             else:
                 raise
