@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import json
 import threading
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -339,9 +340,9 @@ def test_dispatch_merges_consecutive_queued_heartbeats(tmp_path):
 
     rq._dispatch_request()
 
-    assert (
-        client.post_calls == 1
-    ), "mergeable heartbeats should collapse into one request"
+    assert client.post_calls == 1, (
+        "mergeable heartbeats should collapse into one request"
+    )
     assert rq._get_next() is None, "the queue should be fully drained"
     endpoint, data = client.posts[0]
     assert endpoint == "buckets/test/heartbeat?pulsetime=10"
@@ -558,3 +559,61 @@ def test_partial_retry_does_not_replay_delivered_requests(tmp_path):
     assert client.post_calls == 2
     assert [d["data"]["title"] for _, d in client.posts] == ["a", "b"]
     assert rq._get_next() is None
+
+
+@pytest.mark.parametrize("pulsetime", ["1e-05", "1E+1", "1..2"])
+def test_dispatch_preserves_order_around_unusual_pulsetimes(tmp_path, pulsetime):
+    """Parsing failure must not split one bucket into reordered groups."""
+    client = RecordingClient()
+    rq = _fresh_queue(client, tmp_path)
+    endpoints = [
+        "buckets/test/heartbeat?pulsetime=10",
+        f"buckets/test/heartbeat?pulsetime={pulsetime}",
+        "buckets/test/heartbeat?pulsetime=10",
+    ]
+    for i, endpoint in enumerate(endpoints):
+        rq.add_request(endpoint, _heartbeat(i * 10))
+
+    _drain(rq)
+
+    assert [endpoint for endpoint, _ in client.posts] == endpoints
+    assert [data["timestamp"] for _, data in client.posts] == [
+        _heartbeat(i * 10)["timestamp"] for i in range(3)
+    ]
+    assert rq.wait_for_queue_empty(timeout=0)
+
+
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [
+        {"timestamp": "not-a-timestamp"},
+        {"timestamp": 123},
+        {"duration": float("nan")},
+        {"duration": float("inf")},
+    ],
+)
+def test_dispatch_invalid_event_does_not_block_later_heartbeats(
+    tmp_path, invalid_fields
+):
+    """Bad event values go to dispatch unchanged instead of killing coalescing."""
+    client = RecordingClient()
+    rq = _fresh_queue(client, tmp_path)
+    endpoint = "buckets/test/heartbeat?pulsetime=10"
+    invalid = dict(_heartbeat(10), **invalid_fields)
+    payloads = [_heartbeat(0), invalid, _heartbeat(20)]
+    for payload in payloads:
+        rq.add_request(endpoint, payload)
+
+    _drain(rq)
+
+    assert len(client.posts) == 3
+    assert client.posts[1][0] == endpoint
+    assert json.dumps(client.posts[1][1], sort_keys=True) == json.dumps(
+        invalid, sort_keys=True
+    )
+    for index in (0, 2):
+        assert all(
+            client.posts[index][1][key] == value
+            for key, value in payloads[index].items()
+        )
+    assert rq.wait_for_queue_empty(timeout=0)
