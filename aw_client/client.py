@@ -286,6 +286,16 @@ class ActivityWatchClient:
         endpoint = f"buckets/{bucket_id}/events/{event_id}"
         self._delete(endpoint)
 
+    def delete_events(self, bucket_id: str, event_ids: List[int]) -> int:
+        """
+        Deletes many events in one request.
+
+        Unknown and duplicate ids are ignored. Returns the number of events
+        that existed and were deleted.
+        """
+        endpoint = f"buckets/{bucket_id}/events/delete"
+        return int(self._post(endpoint, {"ids": list(event_ids)}).json())
+
     def get_eventcount(
         self,
         bucket_id: str,
