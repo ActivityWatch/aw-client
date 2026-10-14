@@ -5,7 +5,9 @@ build:
 
 test:
 	python -c "import aw_client"
-	pytest -s -vv tests/test_requestqueue.py tests/test_profile.py tests/test_profile_config.py tests/test_queries.py tests/test_proxy.py tests/test_delete_events.py
+	# test_client.py needs a live server, test_failqueue.py is interactive, and
+	# test_auth.py sets XDG_* (ignored by platformdirs on macOS/Windows).
+	pytest -s -vv tests --ignore=tests/test_client.py --ignore=tests/test_failqueue.py --ignore=tests/test_auth.py
 
 test-integration:
 	pytest -v tests/test_client.py
