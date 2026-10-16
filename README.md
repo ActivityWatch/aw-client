@@ -54,7 +54,35 @@ Commands:
   heartbeat  Send a heartbeat to bucket with ID `bucket_id` with JSON `data`
   query      Run a query in file at `path` on the server
   report     Generate an activity report
+  summary    Generate a bounded, privacy-safe activity summary without raw titles or URLs
 ```
+
+### Privacy-safe summaries
+
+The `summary` command aggregates data on the local ActivityWatch server and emits
+category, application, and optional domain totals. It never includes raw events,
+window titles, full URLs, document names, or message subjects in its output.
+
+```bash
+aw-client summary HOSTNAME --start 2026-08-17 --stop 2026-08-18
+aw-client summary HOSTNAME --start 2026-08-17 --stop 2026-08-18 --format json
+aw-client summary HOSTNAME --start 2026-08-17 --stop 2026-08-18 --format json --no-domains
+aw-client summary HOSTNAME --start 2026-08-17 --stop 2026-08-18 --format json --no-apps --no-domains
+```
+
+Browser buckets are scoped to `HOSTNAME`. Buckets that report no hostname (or
+`unknown`) cannot be attributed to a machine, so they are excluded by default — on a
+server collecting from several machines they may belong to a different host. If you
+run a single-machine server and want those legacy buckets counted, opt in:
+
+```bash
+aw-client summary HOSTNAME --start 2026-08-17 --stop 2026-08-18 --include-legacy-buckets
+```
+
+The JSON format is intended for bounded, review-before-send assistant workflows.
+Category names, application names, and domains can still be sensitive. Review the
+exact payload before sharing it with any third-party service, and use `--no-domains`
+or `--no-apps --no-domains` when those totals are unnecessary.
 
 
 ## Debugging

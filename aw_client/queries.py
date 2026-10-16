@@ -160,9 +160,8 @@ def canonicalEvents(
             not_treat_as_afk = filter_keyvals_regex(events, "app", "%s");
             not_afk = period_union(not_afk, not_treat_as_afk);
             not_treat_as_afk = filter_keyvals_regex(events, "title", "%s");
-            not_afk = period_union(not_afk, not_treat_as_afk);"""
-                    % (
-                        params.always_active_pattern.replace('"', '\\"'),
+            not_afk = period_union(not_afk, not_treat_as_afk);""".replace(
+                        "%s",
                         params.always_active_pattern.replace('"', '\\"'),
                     )
                     if params.always_active_pattern
@@ -583,6 +582,56 @@ def fullDesktopQuery(
                 "duration": browser_duration
             }
         };
+    """
+    return query
+
+
+def privacySummary(params: DesktopQueryParams, limit: int = 20) -> str:
+    """Build a bounded query that returns aggregates without titles or full URLs.
+
+    The query performs categorization and AFK filtering on the local server, then
+    returns only category, application, and optional domain totals. It is intended
+    for privacy-conscious reports and AI context payloads where raw event history
+    would be unnecessary and unsafe.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    safe_params = dataclasses.replace(
+        params,
+        bid_window=escape_doublequote(params.bid_window),
+        bid_afk=escape_doublequote(params.bid_afk),
+        bid_browsers=[escape_doublequote(bucket) for bucket in params.bid_browsers],
+    )
+
+    query = f"""
+    {canonicalEvents(safe_params)}
+    category_events = sort_by_duration(merge_events_by_keys(events, ["$category"]));
+    app_events = sort_by_duration(merge_events_by_keys(events, ["app"]));
+    uncategorized_events = filter_keyvals(events, "$category", [["Uncategorized"]]);
+    uncategorized_seconds = sum_durations(uncategorized_events);
+    category_events = limit_events(category_events, {limit});
+    app_events = limit_events(app_events, {limit});
+    active_seconds = sum_durations(events);
+    """
+
+    if safe_params.bid_browsers:
+        query += f"""
+        browser_events = filter_period_intersect(browser_events, not_afk);
+        domain_events = sort_by_duration(merge_events_by_keys(browser_events, ["$domain"]));
+        domain_events = limit_events(domain_events, {limit});
+        """
+    else:
+        query += "domain_events = [];"
+
+    query += """
+    RETURN = {
+        "active_seconds": active_seconds,
+        "uncategorized_seconds": uncategorized_seconds,
+        "category_events": category_events,
+        "app_events": app_events,
+        "domain_events": domain_events
+    };
     """
     return query
 

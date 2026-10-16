@@ -3,7 +3,6 @@
 import json
 import logging
 import textwrap
-import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -16,6 +15,7 @@ import aw_client
 
 from . import queries
 from .classes import default_classes, get_classes
+from .summary import build_summary, find_browser_buckets, format_summary
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -187,7 +187,7 @@ def report(
 
     bid_browsers: List[str] = []
 
-    classes = get_classes()
+    classes = get_classes(obj.client)
     params = queries.DesktopQueryParams(
         bid_browsers=bid_browsers,
         classes=classes,
@@ -326,6 +326,103 @@ def canonical(
                 "Total duration:\t",
                 timedelta(seconds=sum(e["duration"] for e in period)),
             )
+
+
+@main.command(
+    help="Generate a bounded, privacy-safe activity summary without raw titles or URLs"
+)
+@click.argument("hostname")
+@click.option("--cache", is_flag=True)
+@click.option("--start", default=now - td1day, type=click.DateTime())
+@click.option("--stop", default=now, type=click.DateTime())
+@click.option("--limit", default=20, type=click.IntRange(min=1))
+@click.option(
+    "--format",
+    "output_format",
+    default="table",
+    type=click.Choice(["table", "json"]),
+    show_default=True,
+)
+@click.option(
+    "--include-apps/--no-apps",
+    default=True,
+    help="Include application-name totals",
+)
+@click.option(
+    "--include-domains/--no-domains",
+    default=True,
+    help="Include domain-only browser totals; full URLs are always omitted",
+)
+@click.option(
+    "--include-legacy-buckets",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include browser buckets that report no hostname. Only safe on a "
+        "single-machine server; on a shared server they may belong to another host"
+    ),
+)
+@click.option(
+    "--timezone",
+    help="Time zone for start and stop options (for example, 'America/Chicago')",
+)
+@click.pass_obj
+def summary(
+    obj: _Context,
+    hostname: str,
+    cache: bool,
+    start: datetime,
+    stop: datetime,
+    limit: int,
+    output_format: str,
+    include_apps: bool,
+    include_domains: bool,
+    include_legacy_buckets: bool,
+    timezone: Optional[str],
+):
+    if timezone:
+        zone_info = ZoneInfo(timezone)
+        start = start.replace(tzinfo=zone_info)
+        stop = stop.replace(tzinfo=zone_info)
+
+    if not start.tzinfo:
+        start = start.astimezone()
+    if not stop.tzinfo:
+        stop = stop.astimezone()
+    if stop <= start:
+        raise click.ClickException("--stop must be later than --start")
+
+    buckets = obj.client.get_buckets()
+    browser_buckets = (
+        find_browser_buckets(buckets, hostname, include_legacy=include_legacy_buckets)
+        if include_domains
+        else []
+    )
+    params = queries.DesktopQueryParams(
+        bid_window=f"aw-watcher-window_{hostname}",
+        bid_afk=f"aw-watcher-afk_{hostname}",
+        bid_browsers=browser_buckets,
+        classes=get_classes(obj.client),
+    )
+    query = queries.privacySummary(params, limit=limit)
+    logger.debug("Query: \n" + queries.pretty_query(query))
+    result = obj.client.query(query, [(start, stop)], cache=cache)
+    if not result:
+        raise click.ClickException("ActivityWatch returned no summary data")
+
+    payload = build_summary(
+        result[0],
+        start,
+        stop,
+        include_apps=include_apps,
+        include_domains=include_domains,
+        limit=limit,
+        include_legacy_buckets=include_legacy_buckets,
+    )
+    if output_format == "json":
+        print(json.dumps(payload, indent=2))
+    else:
+        print(format_summary(payload))
 
 
 if __name__ == "__main__":
