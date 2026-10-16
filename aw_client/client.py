@@ -514,17 +514,20 @@ class ActivityWatchClient:
 
     def wait_for_start(self, timeout: int = 10) -> None:
         """Wait for the server to start by trying to get the server info."""
-        start_time = datetime.now()
+        deadline = monotonic() + timeout
         sleep_time = 0.1
-        while (datetime.now() - start_time).seconds < timeout:
+        while True:
             try:
                 self.get_info()
-                break
+                return
             except req.exceptions.ConnectionError:
-                sleep(sleep_time)
-                sleep_time *= 2
-        else:
-            raise Exception(f"Server at {self.server_address} did not start in time")
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise Exception(
+                        f"Server at {self.server_address} did not start in time"
+                    ) from None
+                sleep(min(sleep_time, remaining))
+                sleep_time = min(sleep_time * 2, 1.0)
 
     def _warn_queue_before_connect(self) -> None:
         if self._warned_queue_before_connect or self.request_queue.is_alive():

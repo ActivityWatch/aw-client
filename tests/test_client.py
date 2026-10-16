@@ -5,6 +5,7 @@ import warnings
 from random import random
 from datetime import datetime, timedelta, timezone
 from requests.exceptions import HTTPError
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 import pytest
 
@@ -205,3 +206,54 @@ def test_unqueued_heartbeats_are_bounded(monkeypatch, caplog):
     assert (
         "Dropped 2 heartbeats for b while the queue was unwritable" in caplog.messages
     )
+
+
+class FakeClock:
+    """Stands in for time.monotonic/sleep so wait_for_start tests run instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def _client_with_server_starting_at(monkeypatch, start_at):
+    clock = FakeClock()
+    monkeypatch.setattr(client_module, "monotonic", clock.monotonic)
+    monkeypatch.setattr(client_module, "sleep", clock.sleep)
+
+    client = ActivityWatchClient("aw-test-client", testing=True)
+    attempts = []
+
+    def fake_get_info():
+        attempts.append(clock.now)
+        if clock.now < start_at:
+            raise RequestsConnectionError("server not up yet")
+        return {"hostname": "test-host"}
+
+    monkeypatch.setattr(client, "get_info", fake_get_info)
+    return client, clock, attempts
+
+
+@pytest.mark.parametrize("start_at", [5, 7, 9])
+def test_wait_for_start_connects_when_server_starts_within_timeout(
+    monkeypatch, start_at
+):
+    # Regression test for #132: the old backoff slept past the deadline and
+    # gave up without a final attempt, so servers starting at ~6.3-10s failed.
+    client, clock, _ = _client_with_server_starting_at(monkeypatch, start_at)
+    client.wait_for_start(timeout=10)
+    assert start_at <= clock.now < start_at + 1
+
+
+def test_wait_for_start_raises_at_timeout(monkeypatch):
+    client, clock, attempts = _client_with_server_starting_at(monkeypatch, 11)
+    with pytest.raises(Exception, match="did not start in time"):
+        client.wait_for_start(timeout=10)
+    # Never sleeps past the deadline, and makes a final attempt right at it
+    assert clock.now == pytest.approx(10)
+    assert attempts[-1] == pytest.approx(10)
