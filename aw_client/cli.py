@@ -3,7 +3,7 @@
 import json
 import logging
 import textwrap
-import time
+
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -33,8 +33,8 @@ class _Context:
 )
 @click.option(
     "--host",
-    default="127.0.0.1",
-    help="Address of host",
+    default=None,
+    help="Address of host (default: profile config)",
 )
 @click.option(
     "--port",
@@ -56,7 +56,12 @@ class _Context:
 )
 @click.pass_context
 def main(
-    ctx, testing: bool, verbose: bool, host: str, port: int, profile: Optional[str]
+    ctx,
+    testing: bool,
+    verbose: bool,
+    host: Optional[str],
+    port: Optional[int],
+    profile: Optional[str],
 ):
     ctx.obj = _Context()
     # default=None so `--port 5600` is a real override, not discarded as
@@ -313,7 +318,7 @@ def canonical(
                         (
                             str(e.timestamp).split(".")[0],
                             str(e.duration).split(".")[0],
-                            f'[{e.data["app"]}] {textwrap.shorten(e.data["title"], 60, placeholder="...")}',
+                            f"[{e.data['app']}] {textwrap.shorten(e.data['title'], 60, placeholder='...')}",
                         )
                         for e in events[-10:]
                     ],

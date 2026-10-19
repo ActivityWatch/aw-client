@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import ipaddress
 import json
 import logging
@@ -13,13 +14,14 @@ from time import monotonic, sleep
 from typing import (
     Any,
     Callable,
-    Deque,
+    Deque,  # noqa: F401 - used by the legacy type comment below
     Dict,
     List,
     Optional,
     Tuple,
     Union,
 )
+from urllib.parse import urlsplit
 
 import persistqueue
 import requests as req
@@ -125,37 +127,63 @@ class ActivityWatchClient:
         self.client_hostname = socket.gethostname()
 
         _config = load_config()
+        # Profiles isolate their own configuration directory, so a named profile
+        # reads [server] from its own aw-client.toml. The suffixed keys remain
+        # for legacy shared-root layouts such as [server-testing].
         server_key = "server" if resolved == DEFAULT_PROFILE else f"server-{resolved}"
         client_key = "client" if resolved == DEFAULT_PROFILE else f"client-{resolved}"
         if server_key not in _config:
-            if resolved != DEFAULT_PROFILE:
-                logger.warning(
-                    "Profile %s has no [%s] section, falling back to [server] "
-                    "(port %s may collide with the default instance)",
-                    resolved,
-                    server_key,
-                    5666 if is_testing(resolved) else 5600,
-                )
             server_key = "server"
         if client_key not in _config:
             client_key = "client"
         server_config = _config[server_key]
         client_config = _config[client_key]
 
-        server_host = host or server_config["hostname"]
-        server_port = port or server_config["port"]
+        baseurl = server_config.get("baseurl")
+        use_baseurl = bool(baseurl) and host is None and port is None
+        if use_baseurl:
+            try:
+                destination = urlsplit(baseurl)
+                if (
+                    destination.scheme not in {"http", "https"}
+                    or not destination.hostname
+                    or destination.username is not None
+                    or destination.password is not None
+                    or destination.query
+                    or destination.fragment
+                ):
+                    raise ValueError("Unsupported URL")
+                server_host = destination.hostname
+                server_port = destination.port
+                if server_port is None:
+                    server_port = 443 if destination.scheme == "https" else 80
+            except ValueError as e:
+                raise ValueError(
+                    "server baseurl must be an HTTP(S) URL without credentials, "
+                    "query or fragment"
+                ) from e
+            self.server_address = baseurl.rstrip("/")
+        else:
+            server_host = host or server_config.get(
+                "hostname", _config["server"]["hostname"]
+            )
+            server_port = port or server_config.get("port", _config["server"]["port"])
+            self.server_address = f"{protocol}://{server_host}:{server_port}"
         self.server_api_key = load_local_server_api_key(
             str(server_host), server_port, profile=resolved
         )
-        self.server_address = f"{protocol}://{server_host}:{server_port}"
         # A local server must never be reached through a system proxy: NO_PROXY
         # often lists "localhost" but not "127.0.0.1", which sends every request
         # to the proxy and fails (#41). Remote servers keep honoring the env.
         self._proxies = _NO_PROXIES if _is_loopback_host(server_host) else None
 
-        self.instance = SingleInstance(
-            f"{self.client_name}-at-{server_host}-on-{server_port}"
-        )
+        instance_name = f"{self.client_name}-at-{server_host}-on-{server_port}"
+        if use_baseurl:
+            # A URL can contain filename-unsafe IPv6/path characters, and two
+            # reverse-proxy prefixes may identify different server instances.
+            url_id = hashlib.sha256(self.server_address.encode()).hexdigest()
+            instance_name = f"{self.client_name}-at-url-{url_id}"
+        self.instance = SingleInstance(instance_name)
 
         self.commit_interval = client_config["commit_interval"]
 

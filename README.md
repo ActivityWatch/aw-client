@@ -57,6 +57,43 @@ Commands:
 ```
 
 
+## Server URL configuration
+
+To connect through an HTTPS reverse proxy, set `baseurl` in the `[server]`
+section of your `aw-client` configuration file:
+
+```toml
+[server]
+baseurl = "https://aw.example.com/activitywatch"
+```
+
+Use the URL prefix **before** `/api/0`; a path prefix and a trailing slash are
+supported. Only HTTP(S) URLs without embedded credentials, a query or a fragment
+are accepted. TLS certificate verification remains enabled.
+
+`baseurl` takes precedence over configured `hostname`/`port` and the constructor's
+`protocol`. An explicitly passed `host` or `port` (including CLI `--host`/`--port`)
+opts out of `baseurl` and uses the existing protocol/host/port behavior. An absent
+or empty `baseurl` preserves that behavior too. A profile is an isolated instance
+with its own configuration directory, so set `baseurl` in the `[server]` section of
+that profile's own `aw-client.toml` (for example
+`~/.config/activitywatch-research/aw-client/aw-client.toml`). No
+`[server-<profile>]` section is needed, with one exception.
+
+The `testing` profile: the built-in configuration already defines
+`[server-testing]`, and that section wins over `[server]`. So with
+`--testing` (an alias for `--profile testing`), set `baseurl` in
+`[server-testing]` of the testing profile's own `aw-client.toml`:
+
+```toml
+[server-testing]
+baseurl = "https://aw-testing.example.com/activitywatch"
+```
+
+Local API-key discovery and proxy bypass use the configured URL's actual host
+and port, not the default loopback address. Remote URLs do not receive a key
+read from the local server configuration.
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
