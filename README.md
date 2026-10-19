@@ -57,6 +57,30 @@ Commands:
 ```
 
 
+## Server URL configuration
+
+To connect through an HTTPS reverse proxy, set `baseurl` in the `[server]`
+section of your `aw-client` configuration file:
+
+```toml
+[server]
+baseurl = "https://aw.example.com/activitywatch"
+```
+
+Use the URL prefix **before** `/api/0`; a path prefix and a trailing slash are
+supported. Only HTTP(S) URLs without embedded credentials, a query or a fragment
+are accepted. TLS certificate verification remains enabled.
+
+`baseurl` takes precedence over configured `hostname`/`port` and the constructor's
+`protocol`. An explicitly passed `host` or `port` (including CLI `--host`/`--port`)
+opts out of `baseurl` and uses the existing protocol/host/port behavior. An absent
+or empty `baseurl` preserves that behavior too. For isolated profiles, put the
+option in the matching section, such as `[server-testing]` or `[server-research]`.
+
+Local API-key discovery and proxy bypass use the configured URL's actual host
+and port, not the default loopback address. Remote URLs do not receive a key
+read from the local server configuration.
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
