@@ -144,9 +144,6 @@ class ActivityWatchClient:
         server_config = _config[server_key]
         client_config = _config[client_key]
 
-        server_host = host or server_config["hostname"]
-        server_port = port or server_config["port"]
-        self.server_address = f"{protocol}://{server_host}:{server_port}"
         baseurl = server_config.get("baseurl")
         use_baseurl = bool(baseurl) and host is None and port is None
         if use_baseurl:
@@ -171,6 +168,10 @@ class ActivityWatchClient:
                     "query or fragment"
                 ) from e
             self.server_address = baseurl.rstrip("/")
+        else:
+            server_host = host or server_config["hostname"]
+            server_port = port or server_config["port"]
+            self.server_address = f"{protocol}://{server_host}:{server_port}"
         self.server_api_key = load_local_server_api_key(
             str(server_host), server_port, profile=resolved
         )

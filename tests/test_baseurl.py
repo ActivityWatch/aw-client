@@ -176,6 +176,31 @@ def test_protocol_does_not_override_configured_baseurl(configured_client):
     assert client.server_address == "https://configured.example"
 
 
+@pytest.mark.parametrize(
+    "baseurl, expected_port",
+    [
+        ("https://research.example/aw/", 443),
+        ("https://research.example:8443/aw/", 8443),
+    ],
+)
+def test_named_profile_with_only_baseurl(
+    configured_client, monkeypatch, baseurl, expected_port
+):
+    configured_client["server-research"] = {"baseurl": baseurl}
+    destinations = []
+
+    def local_key(host, port, profile=None):
+        destinations.append((host, port, profile))
+        return None
+
+    monkeypatch.setattr(client_module, "load_local_server_api_key", local_key)
+    client = ActivityWatchClient("baseurl-test", profile="research")
+    assert client._url("info") == baseurl.rstrip("/") + "/api/0/info"
+    assert destinations == [("research.example", expected_port, "research")]
+    assert client._proxies is None
+    assert client.commit_interval == configured_client["client"]["commit_interval"]
+
+
 def test_named_profile_fallback_keeps_default_server_url(configured_client):
     configured_client["server"]["baseurl"] = "https://configured.example"
     client = ActivityWatchClient("baseurl-test", profile="research")
