@@ -127,17 +127,12 @@ class ActivityWatchClient:
         self.client_hostname = socket.gethostname()
 
         _config = load_config()
+        # Profiles isolate their own configuration directory, so a named profile
+        # reads [server] from its own aw-client.toml. The suffixed keys remain
+        # for legacy shared-root layouts such as [server-testing].
         server_key = "server" if resolved == DEFAULT_PROFILE else f"server-{resolved}"
         client_key = "client" if resolved == DEFAULT_PROFILE else f"client-{resolved}"
         if server_key not in _config:
-            if resolved != DEFAULT_PROFILE:
-                logger.warning(
-                    "Profile %s has no [%s] section, falling back to [server] "
-                    "(port %s may collide with the default instance)",
-                    resolved,
-                    server_key,
-                    5666 if is_testing(resolved) else 5600,
-                )
             server_key = "server"
         if client_key not in _config:
             client_key = "client"

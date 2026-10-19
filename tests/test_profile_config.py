@@ -44,17 +44,17 @@ class TestClientConstructor:
         assert client.server_address.endswith(":5600")
         assert "AW_PROFILE" not in os.environ
 
-    def test_named_profile_falls_back_to_server_section(self, isolated_dirs, caplog):
+    def test_named_profile_reads_its_own_server_section(self, isolated_dirs, caplog):
+        # Profiles isolate their own config directory, so [server] in the
+        # profile's aw-client.toml is the expected path, not a fallback.
         with caplog.at_level(logging.WARNING, logger="aw_client.client"):
             client = ActivityWatchClient("t", profile="research")
         assert client.profile == "research"
         assert client.testing is False
         assert client.server_address.endswith(":5600")
         assert os.environ["AW_PROFILE"] == "research"
-        assert any(
-            "falling back to [server]" in rec.message
-            and "may collide with the default instance" in rec.message
-            for rec in caplog.records
+        assert not any(
+            "falling back to [server]" in rec.message for rec in caplog.records
         )
 
     def test_env_from_launcher_is_used_when_no_flags(self, isolated_dirs, monkeypatch):

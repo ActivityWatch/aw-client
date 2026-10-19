@@ -214,7 +214,7 @@ def test_url_only_profile_allows_explicit_override(configured_client, kwargs, ex
     assert client.server_address == expected
 
 
-def test_named_profile_fallback_keeps_default_server_url(configured_client):
+def test_named_profile_reads_baseurl_from_its_server_section(configured_client):
     configured_client["server"]["baseurl"] = "https://configured.example"
     client = ActivityWatchClient("baseurl-test", profile="research")
     assert client.server_address == "https://configured.example"

@@ -74,8 +74,11 @@ are accepted. TLS certificate verification remains enabled.
 `baseurl` takes precedence over configured `hostname`/`port` and the constructor's
 `protocol`. An explicitly passed `host` or `port` (including CLI `--host`/`--port`)
 opts out of `baseurl` and uses the existing protocol/host/port behavior. An absent
-or empty `baseurl` preserves that behavior too. For isolated profiles, put the
-option in the matching section, such as `[server-testing]` or `[server-research]`.
+or empty `baseurl` preserves that behavior too. A profile is an isolated instance
+with its own configuration directory, so set `baseurl` in the `[server]` section of
+that profile's own `aw-client.toml` (for example
+`~/.config/activitywatch-research/aw-client/aw-client.toml`). No
+`[server-<profile>]` section is needed.
 
 Local API-key discovery and proxy bypass use the configured URL's actual host
 and port, not the default loopback address. Remote URLs do not receive a key
