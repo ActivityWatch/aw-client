@@ -201,6 +201,19 @@ def test_named_profile_with_only_baseurl(
     assert client.commit_interval == configured_client["client"]["commit_interval"]
 
 
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({"host": "explicit.example"}, "http://explicit.example:5600"),
+        ({"port": 9876}, "http://127.0.0.1:9876"),
+    ],
+)
+def test_url_only_profile_allows_explicit_override(configured_client, kwargs, expected):
+    configured_client["server-research"] = {"baseurl": "https://research.example/aw"}
+    client = ActivityWatchClient("baseurl-test", profile="research", **kwargs)
+    assert client.server_address == expected
+
+
 def test_named_profile_fallback_keeps_default_server_url(configured_client):
     configured_client["server"]["baseurl"] = "https://configured.example"
     client = ActivityWatchClient("baseurl-test", profile="research")
