@@ -78,7 +78,17 @@ or empty `baseurl` preserves that behavior too. A profile is an isolated instanc
 with its own configuration directory, so set `baseurl` in the `[server]` section of
 that profile's own `aw-client.toml` (for example
 `~/.config/activitywatch-research/aw-client/aw-client.toml`). No
-`[server-<profile>]` section is needed.
+`[server-<profile>]` section is needed, with one exception.
+
+The `testing` profile: the built-in configuration already defines
+`[server-testing]`, and that section wins over `[server]`. So with
+`--testing` (an alias for `--profile testing`), set `baseurl` in
+`[server-testing]` of the testing profile's own `aw-client.toml`:
+
+```toml
+[server-testing]
+baseurl = "https://aw-testing.example.com/activitywatch"
+```
 
 Local API-key discovery and proxy bypass use the configured URL's actual host
 and port, not the default loopback address. Remote URLs do not receive a key
