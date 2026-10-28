@@ -98,7 +98,9 @@ def _run_main(client: StorageClient, answers: Iterator[str]) -> str:
         merge.aw_client, "ActivityWatchClient", lambda **kwargs: client
     ), patch(
         "builtins.input", side_effect=lambda *args: next(answers)
-    ), contextlib.redirect_stdout(out):
+    ), contextlib.redirect_stdout(
+        out
+    ):
         merge.main()
     return out.getvalue()
 
