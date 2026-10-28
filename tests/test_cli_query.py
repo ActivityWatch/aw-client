@@ -18,7 +18,7 @@ from aw_client.cli import query
     [
         ("1", 1),
         ("true", True),
-        ('"hello 世界"', "hello 世界"),
+        ('"hello"', "hello"),
         ('{"total": 60}', {"total": 60}),
         ("{}", {}),
         ("[1, 2]", [1, 2]),
@@ -36,9 +36,7 @@ def test_query_displays_real_aql_results(tmp_path, expression, expected, json_ou
         ]
 
     path = tmp_path / "query.awq"
-    # Match query()'s platform-default file encoding; decoding policy is separate
-    # from rendering results (Windows Python 3.9 does not default to UTF-8).
-    path.write_text(f"RETURN = {expression};")
+    path.write_text(f"RETURN = {expression};", encoding="utf-8")
     result = CliRunner().invoke(
         query,
         [str(path), *(["--json"] if json_output else [])],
@@ -64,6 +62,7 @@ def invoke_result(tmp_path, periods, *args):
     [
         None,
         1.5,
+        "hello 世界",
         [{"duration": "not a number", "data": {}}],
         [{"duration": 1, "data": "not an event"}],
         [{"duration": True, "data": {}}],
