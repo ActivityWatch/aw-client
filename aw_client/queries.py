@@ -530,10 +530,13 @@ def escape_doublequote(s: str) -> str:
 def fullDesktopQuery(
     params: DesktopQueryParams,
 ) -> str:
-    # Escape `"`
-    params.bid_window = escape_doublequote(params.bid_window)
-    params.bid_afk = escape_doublequote(params.bid_afk)
-    params.bid_browsers = [escape_doublequote(bucket) for bucket in params.bid_browsers]
+    # Escape `"` on a private copy; canonicalEvents may also fill default classes.
+    params = dataclasses.replace(
+        params,
+        bid_window=escape_doublequote(params.bid_window),
+        bid_afk=escape_doublequote(params.bid_afk),
+        bid_browsers=[escape_doublequote(bucket) for bucket in params.bid_browsers],
+    )
 
     # Build the base query
     query = f"""

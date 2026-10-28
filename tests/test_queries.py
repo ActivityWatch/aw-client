@@ -4,6 +4,8 @@ The generated queries are executed with aw-core's query2 engine against an
 in-memory datastore, so they are checked end to end without a running server.
 """
 
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +20,7 @@ from aw_client.queries import (
     DesktopQueryParams,
     browsersWithBuckets,
     canonicalMultideviceEvents,
+    fullDesktopQuery,
     isAndroidParams,
     isDesktopParams,
     multideviceHostParams,
@@ -413,3 +416,94 @@ def test_escape_doublequote():
     )
     assert escape_doublequote("no quotes") == "no quotes"
     assert escape_doublequote("") == ""
+
+
+@pytest.mark.parametrize("with_browser", [True, False])
+@pytest.mark.parametrize("explicit_classes", [True, False])
+def test_full_desktop_params_unchanged(monkeypatch, explicit_classes, with_browser):
+    classes = deepcopy(CLASSES)
+    monkeypatch.setattr("aw_client.queries.get_classes", lambda: classes)
+    params = DesktopQueryParams(
+        bid_window='aw-watcher-window_"desk"',
+        bid_afk='aw-watcher-afk_"desk"',
+        bid_browsers=['aw-watcher-web-chrome_"desk"'] if with_browser else [],
+        classes=deepcopy(CLASSES) if explicit_classes else [],
+        filter_classes=[["Work"]],
+    )
+    before = asdict(params)
+    fresh = deepcopy(params)
+    browsers = params.bid_browsers
+    caller_classes = params.classes
+    filters = params.filter_classes
+    first = fullDesktopQuery(params)
+    second = fullDesktopQuery(params)
+
+    assert asdict(params) == before
+    assert params.bid_browsers is browsers
+    assert params.classes is caller_classes
+    assert params.filter_classes is filters
+    assert classes == CLASSES
+    assert first == second == fullDesktopQuery(fresh)
+
+
+@pytest.mark.parametrize("with_browser", [True, False])
+@pytest.mark.parametrize("explicit_classes", [True, False])
+@pytest.mark.parametrize("quoted", [False, True])
+def test_full_desktop_repeated_query_execution(
+    datastore, monkeypatch, quoted, explicit_classes, with_browser
+):
+    monkeypatch.setattr("aw_client.queries.get_classes", lambda: deepcopy(CLASSES))
+    host = '"desk"' if quoted else "desk"
+    window = "aw-watcher-window_" + host
+    afk = "aw-watcher-afk_" + host
+    browser = "aw-watcher-web-chrome_" + host
+    _insert(
+        datastore,
+        window,
+        "currentwindow",
+        host,
+        [(0, 5, {"app": "Google Chrome", "title": "code"})],
+    )
+    _insert(
+        datastore,
+        afk,
+        "afkstatus",
+        host,
+        [(0, 5, {"status": "not-afk"})],
+    )
+    _insert(
+        datastore,
+        browser,
+        "web.tab.current",
+        host,
+        [
+            (
+                0,
+                5,
+                {"url": "https://example.com/code", "title": "code", "audible": False},
+            )
+        ],
+    )
+    params = DesktopQueryParams(
+        bid_window=window,
+        bid_afk=afk,
+        bid_browsers=[browser] if with_browser else [],
+        classes=deepcopy(CLASSES) if explicit_classes else [],
+        filter_classes=[["Work"]],
+    )
+    before = asdict(params)
+    for _ in range(2):
+        result = query2.query("test", fullDesktopQuery(params), _t(0), _t(5), datastore)
+        assert result["window"]["duration"] == timedelta(minutes=5)
+        assert result["browser"]["duration"] == (
+            timedelta(minutes=5) if with_browser else 0
+        )
+        if with_browser:
+            assert (
+                result["browser"]["urls"][0]["data"]["url"]
+                == "https://example.com/code"
+            )
+        else:
+            assert result["browser"]["urls"] == []
+        assert result["events"][0]["data"]["$category"] == ["Work"]
+        assert asdict(params) == before
