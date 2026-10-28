@@ -3,6 +3,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import socket
 import sqlite3
@@ -100,6 +101,7 @@ class ActivityWatchClient:
         port=None,
         protocol="http",
         profile: Optional[str] = None,
+        request_timeout: float = 10.0,
     ) -> None:
         """
         A handy wrapper around the aw-server REST API. The recommended way of interacting with the server.
@@ -123,6 +125,7 @@ class ActivityWatchClient:
         self.profile = resolved
         self.testing = is_testing(resolved)
 
+        self.request_timeout = self._validate_timeout(request_timeout)
         self.client_name = client_name
         self.client_hostname = socket.gethostname()
 
@@ -200,6 +203,17 @@ class ActivityWatchClient:
     #   Get/Post base requests
     #
 
+    @staticmethod
+    def _validate_timeout(timeout: float) -> float:
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("HTTP timeout must be finite and greater than zero")
+        return timeout
+
+    def _http_timeout(self, timeout: Optional[float]) -> float:
+        return self._validate_timeout(
+            self.request_timeout if timeout is None else timeout
+        )
+
     def _url(self, endpoint: str):
         return f"{self.server_address}/api/0/{endpoint}"
 
@@ -221,7 +235,7 @@ class ActivityWatchClient:
             params=params,
             headers=self._headers(),
             proxies=self._proxies,
-            timeout=timeout,
+            timeout=self._http_timeout(timeout),
         )
 
     @always_raise_for_request_errors
@@ -230,6 +244,8 @@ class ActivityWatchClient:
         endpoint: str,
         data: Union[List[Any], Dict[str, Any]],
         params: Optional[dict] = None,
+        *,
+        timeout: Optional[float] = None,
     ) -> req.Response:
         headers = self._headers(
             {"Content-type": "application/json", "charset": "utf-8"}
@@ -240,10 +256,13 @@ class ActivityWatchClient:
             headers=headers,
             params=params,
             proxies=self._proxies,
+            timeout=self._http_timeout(timeout),
         )
 
     @always_raise_for_request_errors
-    def _delete(self, endpoint: str, data: Any = None) -> req.Response:
+    def _delete(
+        self, endpoint: str, data: Any = None, *, timeout: Optional[float] = None
+    ) -> req.Response:
         if data is None:
             data = {}
         headers = self._headers({"Content-type": "application/json"})
@@ -252,6 +271,7 @@ class ActivityWatchClient:
             data=json.dumps(data),
             headers=headers,
             proxies=self._proxies,
+            timeout=self._http_timeout(timeout),
         )
 
     def get_info(self, timeout: Optional[float] = None):
@@ -458,15 +478,15 @@ class ActivityWatchClient:
 
     # Import & export
 
-    def export_all(self) -> dict:
-        return self._get("export").json()
+    def export_all(self, *, timeout: Optional[float] = None) -> dict:
+        return self._get("export", timeout=timeout).json()
 
-    def export_bucket(self, bucket_id) -> dict:
-        return self._get(f"buckets/{bucket_id}/export").json()
+    def export_bucket(self, bucket_id, *, timeout: Optional[float] = None) -> dict:
+        return self._get(f"buckets/{bucket_id}/export", timeout=timeout).json()
 
-    def import_bucket(self, bucket: dict) -> None:
+    def import_bucket(self, bucket: dict, *, timeout: Optional[float] = None) -> None:
         endpoint = "import"
-        self._post(endpoint, {"buckets": {bucket["id"]: bucket}})
+        self._post(endpoint, {"buckets": {bucket["id"]: bucket}}, timeout=timeout)
 
     #
     #   Query (server-side transformation)
@@ -478,6 +498,8 @@ class ActivityWatchClient:
         timeperiods: List[Tuple[datetime, datetime]],
         name: Optional[str] = None,
         cache: Optional[bool] = None,
+        *,
+        timeout: Optional[float] = None,
     ) -> List[Any]:
         endpoint = "query/"
         params = {}  # type: Dict[str, Any]
@@ -508,7 +530,7 @@ class ActivityWatchClient:
             ],
             "query": query.split("\n"),
         }
-        response = self._post(endpoint, data, params=params)
+        response = self._post(endpoint, data, params=params, timeout=timeout)
         return response.json()
 
     #
@@ -550,15 +572,24 @@ class ActivityWatchClient:
         # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
         self._warned_queue_before_connect = False
 
-    def wait_for_start(self, timeout: int = 10) -> None:
-        """Wait for the server to start by trying to get the server info."""
+    def wait_for_start(self, timeout: float = 10) -> None:
+        """Wait for server info, limiting each attempt to the remaining budget.
+
+        Connect/read inactivity timeouts do not impose a total deadline on DNS,
+        redirects or a peer that keeps sending response bytes.
+        """
+        self._validate_timeout(timeout)
         deadline = monotonic() + timeout
         sleep_time = 0.1
         while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise Exception(
+                    f"Server at {self.server_address} did not start in time"
+                ) from None
             try:
-                # Bound each probe by the time left: a proxy can hold a request
-                # open far longer than the caller's timeout.
-                self.get_info(timeout=max(deadline - monotonic(), 0.1))
+                # Requests applies the scalar separately to connect and read.
+                self.get_info(timeout=min(self.request_timeout, remaining / 2))
                 return
             except (
                 req.exceptions.ConnectionError,
@@ -572,12 +603,9 @@ class ActivityWatchClient:
                     if status not in (502, 503, 504):
                         raise
                 remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise Exception(
-                        f"Server at {self.server_address} did not start in time"
-                    ) from None
-                sleep(min(sleep_time, remaining))
-                sleep_time = min(sleep_time * 2, 1.0)
+                if remaining > 0:
+                    sleep(min(sleep_time, remaining))
+                    sleep_time = min(sleep_time * 2, 1.0)
 
     def _warn_queue_before_connect(self) -> None:
         if self._warned_queue_before_connect or self.request_queue.is_alive():
@@ -689,6 +717,8 @@ class RequestQueue(threading.Thread):
 
     def _create_buckets(self) -> None:
         for bucket in self._registered_buckets:
+            if self.should_stop():
+                break
             self.client.create_bucket(bucket.id, bucket.type)
 
     def _try_connect(self) -> bool:
@@ -753,7 +783,7 @@ class RequestQueue(threading.Thread):
             # wait a bit before retrying, so we don't spam the server (or logs), see:
             #  - https://github.com/ActivityWatch/activitywatch/issues/815
             #  - https://github.com/ActivityWatch/activitywatch/issues/756#issuecomment-1266662861
-            sleep(0.5)
+            self.wait(0.5)
             return
         except req.RequestException as e:
             # NOTE: `e.response is not None` matters: Response.__bool__ is
@@ -789,7 +819,7 @@ class RequestQueue(threading.Thread):
         self._task_done()
 
     def run(self) -> None:
-        self._stop_event.clear()
+        # A Thread can only start once; never erase a stop requested during bootstrap.
         while not self.should_stop():
             # Connect
             while not self._try_connect():
