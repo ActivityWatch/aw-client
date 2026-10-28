@@ -48,6 +48,7 @@ def silent_peer():
                     if conn.recv(65536):
                         received.set()
                 except socket.timeout:
+                    # A peer that sends nothing must not hold test cleanup.
                     pass
                 release.wait(5)
 
