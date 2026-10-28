@@ -36,7 +36,9 @@ def test_query_displays_real_aql_results(tmp_path, expression, expected, json_ou
         ]
 
     path = tmp_path / "query.awq"
-    path.write_text(f"RETURN = {expression};", encoding="utf-8")
+    # Match query()'s platform-default file encoding; decoding policy is separate
+    # from rendering results (Windows Python 3.9 does not default to UTF-8).
+    path.write_text(f"RETURN = {expression};")
     result = CliRunner().invoke(
         query,
         [str(path), *(["--json"] if json_output else [])],
