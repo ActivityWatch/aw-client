@@ -474,14 +474,14 @@ class ActivityWatchClient:
         cache: bool = False,
     ) -> List[Any]:
         endpoint = "query/"
-        params = {}  # type: Dict[str, Any]
+        # Both servers accept boolean query strings; Rust does not accept 0/1.
+        params = {"cache": str(cache).lower()}  # type: Dict[str, Any]
         if cache:
             if not name:
                 raise Exception(
                     "You are not allowed to do caching without a query name"
                 )
             params["name"] = name
-            params["cache"] = int(cache)
 
         # Check that datetimes have timezone information
         for start, stop in timeperiods:
