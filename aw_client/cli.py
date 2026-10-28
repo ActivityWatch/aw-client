@@ -54,6 +54,13 @@ class _Context:
     default=None,
     help="Named instance profile. --testing is an alias for --profile testing.",
 )
+@click.option(
+    "--request-timeout",
+    default=10.0,
+    type=click.FloatRange(min=0, min_open=True),
+    show_default=True,
+    help="HTTP connect/read inactivity timeout in seconds; increase for long operations.",
+)
 @click.pass_context
 def main(
     ctx,
@@ -62,6 +69,7 @@ def main(
     host: Optional[str],
     port: Optional[int],
     profile: Optional[str],
+    request_timeout: float,
 ):
     ctx.obj = _Context()
     # default=None so `--port 5600` is a real override, not discarded as
@@ -72,6 +80,7 @@ def main(
         port=port,
         testing=testing,
         profile=profile,
+        request_timeout=request_timeout,
     )
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
 

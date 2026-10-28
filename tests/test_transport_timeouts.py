@@ -261,3 +261,22 @@ def test_stop_prevents_further_bucket_requests(isolated_client, monkeypatch):
     monkeypatch.setattr(client, "create_bucket", create_bucket)
     queue._create_buckets()
     assert calls == ["first"]
+
+
+def test_cli_long_operation_policy(monkeypatch):
+    from click.testing import CliRunner
+    from aw_client.cli import main
+
+    policies = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            policies.append(kwargs["request_timeout"])
+
+        def get_buckets(self):
+            return {}
+
+    monkeypatch.setattr("aw_client.ActivityWatchClient", Client)
+    result = CliRunner().invoke(main, ["--request-timeout", "120", "buckets"])
+    assert result.exit_code == 0, result.output
+    assert policies == [120]

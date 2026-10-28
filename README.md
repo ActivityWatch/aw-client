@@ -114,6 +114,9 @@ callers must select the appropriate host's buckets.
 All HTTP verbs use a finite **10-second connect/read inactivity timeout** by
 default. Set `ActivityWatchClient(..., request_timeout=30)` to change the
 client-wide policy, including queued heartbeats and bucket registration.
+The CLI exposes the same policy as `aw-client --request-timeout 120 query ...`.
+This replaces previously unbounded HTTP waits; callers of large event reads,
+bulk inserts, or CLI reports may need a larger policy on slow servers.
 Values must be positive and finite. A timeout raises `requests.Timeout`;
 queued heartbeat timeouts retain the pending SQLite request for replay.
 
