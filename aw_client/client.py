@@ -73,6 +73,24 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _queue_destination(address: str) -> Tuple[str, str, int, str]:
+    """Canonical HTTP destination, without credentials or filename-unsafe text.
+
+    Do not resolve DNS or merge different loopback names: those can route to
+    different virtual hosts. Preserve path case and escaping for proxy routes.
+    """
+    destination = urlsplit(address)
+    host = (destination.hostname or "").lower()
+    try:
+        host = ipaddress.ip_address(host).compressed
+    except ValueError:
+        pass
+    port = destination.port
+    if port is None:
+        port = 443 if destination.scheme == "https" else 80
+    return destination.scheme.lower(), host, port, destination.path.rstrip("/")
+
+
 def _dt_is_tzaware(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
 
@@ -637,10 +655,36 @@ class RequestQueue(threading.Thread):
                 if profile is not None
                 else ("-testing" if client.testing else "")
             )
-            persistqueue_path = os.path.join(
-                queued_dir,
-                f"{self.client.client_name}{suffix}.v{self.VERSION}.persistqueue",
+            legacy_name = (
+                f"{self.client.client_name}{suffix}.v{self.VERSION}.persistqueue"
             )
+            legacy_path = os.path.join(queued_dir, legacy_name)
+            default_port = 5666 if client.testing else 5600
+            # Older custom queue clients lack server_address; preserve their
+            # local-only contract. ActivityWatchClient always supplies it.
+            address = getattr(
+                client, "server_address", f"http://127.0.0.1:{default_port}"
+            )
+            destination = _queue_destination(address)
+            if destination == ("http", "127.0.0.1", default_port, ""):
+                # The sole compatibility owner of an unbound legacy backlog.
+                # Keep its path (no move/open-file race with old clients).
+                persistqueue_path = legacy_path
+            else:
+                destination_id = hashlib.sha256(
+                    json.dumps(destination).encode("utf-8")
+                ).hexdigest()
+                persistqueue_path = os.path.join(
+                    queued_dir,
+                    f"{self.client.client_name}{suffix}.v{self.VERSION}."
+                    f"destination-{destination_id}.persistqueue",
+                )
+                if os.path.exists(legacy_path):
+                    logger.warning(
+                        "Leaving unbound legacy queue at %s untouched; "
+                        "only the default local destination may consume it",
+                        legacy_path,
+                    )
 
         logger.debug(f"queue path '{persistqueue_path}'")
         self.persistqueue_path = persistqueue_path
