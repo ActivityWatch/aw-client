@@ -84,6 +84,7 @@ def _queue_destination(address: str) -> Tuple[str, str, int, str]:
     try:
         host = ipaddress.ip_address(host).compressed
     except ValueError:
+        # A DNS hostname has no IP spelling to compress; keep its lowercase form.
         pass
     port = destination.port
     if port is None:
