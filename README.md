@@ -94,6 +94,29 @@ Local API-key discovery and proxy bypass use the configured URL's actual host
 and port, not the default loopback address. Remote URLs do not receive a key
 read from the local server configuration.
 
+## Persistent heartbeat queues and server destinations
+
+Pending heartbeats are isolated by client name, profile and effective server
+URL (scheme, hostname, port and reverse-proxy path prefix). URL host casing,
+implicit default ports and a trailing slash do not create a second queue.
+Different hostnames are kept separate even when DNS resolves them to the same
+machine; path case and escaping are preserved. Non-default destination names
+use a SHA-256 digest, not a raw URL or credentials.
+
+For compatibility, the default local destination retains its legacy queue:
+`http://127.0.0.1:5600` (port `5666` for the testing profile), without a path
+prefix. Other destinations never adopt an old unbound queue automatically:
+its requests contain no record of which server they were intended for. The
+legacy directory is left untouched and a warning is logged. If a non-default
+server has an old backlog, preserve it and verify its intended destination
+before arranging an explicit recovery; do not blindly copy it into another
+server's queue. An explicit `RequestQueue(..., persistqueue_path=...)` remains
+caller-owned, including responsibility for destination isolation.
+
+Do not run an old client release against the same queue directories while
+retargeting servers: old versions do not enforce this destination boundary.
+This change does not alter queue payloads, retry/drop policy or dispatch order.
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
