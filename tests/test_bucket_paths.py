@@ -187,7 +187,8 @@ def test_queued_heartbeat_retries_literal_bucket(wire_client, bucket_id):
     with pytest.warns(UserWarning, match="connect"):
         client.create_bucket(bucket_id, "test-event", queued=True)
     assert queue._registered_buckets[0].id == bucket_id
-    assert queue._try_connect()
+    connected = queue._try_connect()
+    assert connected
     first = Event(timestamp=START, duration=1, data={"literal_id": bucket_id})
     second = Event(timestamp=END, duration=1, data={"next": bucket_id})
     client.heartbeat(bucket_id, first, pulsetime=12.5, queued=True)
@@ -245,15 +246,14 @@ def memory_server(wire_client, monkeypatch):
     # Independently establish server support before exercising SDK routing.
     for bucket_id in BUCKET_IDS:
         route = f"/api/0/buckets/{quote(bucket_id, safe='')}"
-        assert (
-            flask_client.post(
-                route,
-                json={"type": "test-event", "client": "control", "hostname": "fixture"},
-            ).status_code
-            == 200
+        created = flask_client.post(
+            route,
+            json={"type": "test-event", "client": "control", "hostname": "fixture"},
         )
+        assert created.status_code == 200
         assert bucket_id in flask_client.get("/api/0/buckets/").get_json()
-        assert flask_client.delete(route + "?force=1").status_code == 200
+        deleted = flask_client.delete(route + "?force=1")
+        assert deleted.status_code == 200
 
     def forward(record):
         method, target, body = record
@@ -291,12 +291,14 @@ def test_memory_server_keeps_buckets_distinct(memory_server, bucket_id):
     client.delete_event(bucket_id, inserted.id)
     inserted_many = client.insert_events(bucket_id, [event])
     assert inserted_many
-    assert client.delete_events(bucket_id, [inserted_many[0].id]) == 1
+    deleted_count = client.delete_events(bucket_id, [inserted_many[0].id])
+    assert deleted_count == 1
     client.heartbeat(bucket_id, event, pulsetime=12.5)
     assert client.get_eventcount(bucket_id) == 1
     with pytest.warns(UserWarning, match="connect"):
         client.setup_bucket(bucket_id, "test-event")
-    assert client.request_queue._try_connect()
+    connected = client.request_queue._try_connect()
+    assert connected
     client.heartbeat(bucket_id, event, pulsetime=12.5, queued=True)
     client.heartbeat(
         bucket_id,
