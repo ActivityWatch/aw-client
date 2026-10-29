@@ -17,6 +17,7 @@ from aw_client.queries import (
     AndroidQueryParams,
     DesktopQueryParams,
     browsersWithBuckets,
+    canonicalEvents,
     canonicalMultideviceEvents,
     isAndroidParams,
     isDesktopParams,
@@ -72,6 +73,66 @@ def _buckets(ds: Datastore) -> Dict[str, Dict[str, Any]]:
         if last:
             bucket["last_updated"] = (last[0].timestamp + last[0].duration).isoformat()
     return buckets
+
+
+@pytest.mark.parametrize("builder", ["desktop", "android", "multidevice"])
+@pytest.mark.parametrize(
+    "category,pattern,title",
+    [
+        ("Work", "Editor", "Editor"),
+        ("Arbete ä", "Editor", "Editor"),
+        ("Focus 😀", "Editor", "Editor"),
+        ("Focus", "ä", "ä"),
+        ("Focus", "😀", "😀"),
+        ('Quoted "work"', r'Editor\s+"file"', 'Editor "file"'),
+    ],
+)
+def test_canonical_category_roundtrip(datastore, builder, category, pattern, title):
+    classes = [([category], {"type": "regex", "regex": pattern})]
+    desktop = DesktopQueryParams(
+        bid_window="aw-watcher-window_desk",
+        bid_afk="aw-watcher-afk_desk",
+        classes=classes,
+    )
+    android = AndroidQueryParams(
+        bid_android="aw-watcher-android_phone", classes=classes
+    )
+    for bid, host, start in [
+        (desktop.bid_window, "desk", 0),
+        (android.bid_android, "phone", 10),
+    ]:
+        _insert(
+            datastore,
+            bid,
+            "currentwindow",
+            host,
+            [(start, start + 10, {"app": title, "title": title})],
+        )
+    _insert(
+        datastore,
+        desktop.bid_afk,
+        "afkstatus",
+        "desk",
+        [(0, 10, {"status": "not-afk"})],
+    )
+
+    def run():
+        fragment = (
+            canonicalMultideviceEvents([desktop, android])
+            if builder == "multidevice"
+            else canonicalEvents(desktop if builder == "desktop" else android)
+        )
+        return _run(datastore, fragment + "\nRETURN = events;")
+
+    events = run()
+    assert _minutes(events) == pytest.approx(20 if builder == "multidevice" else 10)
+    assert all(e["data"]["$category"] == [category] for e in events)
+    for params in (desktop, android):
+        params.filter_classes = [[category]]
+    assert _minutes(run()) == pytest.approx(_minutes(events))
+    for params in (desktop, android):
+        params.filter_classes = [["Nonmatching category"]]
+    assert run() == []
 
 
 def test_desktop_and_android_union(datastore):
