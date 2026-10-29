@@ -30,9 +30,11 @@ def transport(monkeypatch, command):
         else [[event]]
     )
 
-    class FixtureClient(ActivityWatchClient):
+    class FixtureClient:
+        # Bind the real query method without constructing config, locks or queues.
+        query = ActivityWatchClient.query
+
         def __init__(self, *args, **kwargs):
-            # Keep the real query method, but avoid user config, locks and queues.
             pass
 
         def _post(self, endpoint, data, params=None):
