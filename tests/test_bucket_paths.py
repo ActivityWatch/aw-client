@@ -17,7 +17,6 @@ from aw_core.models import Event
 from aw_client import ActivityWatchClient
 from aw_client import client as client_module
 
-
 BUCKET_IDS = [
     "ordinary-bucket",
     "bucket#fragment",
