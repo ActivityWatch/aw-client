@@ -37,21 +37,26 @@ def main() -> None:
     query = build_query()
     data = aw.query(query, [(now - td30d, now)])
 
-    events = [
-        {
-            "timestamp": e["timestamp"],
-            "duration": timedelta(seconds=e["duration"]),
-            **e["data"],
-        }
-        for e in data[0]["events"]
+    events = data[0]["events"]
+    payloads = [
+        {**e["data"], "$category": " > ".join(e["data"]["$category"])} for e in events
     ]
+    df = pd.json_normalize(payloads) if events else pd.DataFrame(columns=["$category"])
 
-    for e in events:
-        e["$category"] = " > ".join(e["$category"])
+    # Reserve envelope names after flattening. Choose unused names across all
+    # rows, including literal dotted keys and flattened nested payload fields.
+    for column in ("timestamp", "duration"):
+        if column in df.columns:
+            renamed = "data." + column
+            while renamed in df.columns:
+                renamed = "data." + renamed
+            df.rename(columns={column: renamed}, inplace=True)
 
-    df = pd.json_normalize(events)
-    df["timestamp"] = pd.to_datetime(df["timestamp"].apply(iso8601.parse_date))
-    df.set_index("timestamp", inplace=True)
+    df.insert(0, "duration", pd.to_timedelta([e["duration"] for e in events], unit="s"))
+    df.index = pd.DatetimeIndex(
+        pd.to_datetime([iso8601.parse_date(e["timestamp"]) for e in events], utc=True),
+        name="timestamp",
+    )
 
     print(df)
 

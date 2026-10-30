@@ -109,3 +109,23 @@ The [`examples/`](examples/) directory contains a couple of example scripts, inc
  - [`load_dataframe.py`](https://github.com/ActivityWatch/aw-client/blob/master/examples/load_dataframe.py) - loads events from a host using a categorizing & AFK-filtering query, put result in a pandas dataframe, and export as CSV.
  - [`merge_buckets.py`](examples/merge_buckets.py) - merges two buckets with non-intersecting events by moving all events from one into the other.
  - [`redact_sensitive.py`](examples/redact_sensitive.py) - redact sensitive events.
+
+### Dataframe export columns
+
+`load_dataframe.py` keeps the event envelope's timestamp as a UTC-aware
+`timestamp` index and its duration as a timedelta `duration` column. Payload
+columns retain pandas' usual dotted-path normalization and `$category` paths
+are joined with ` > `. If a payload column is named `timestamp` or `duration`,
+that column is renamed by repeatedly prepending `data.` until the name is unused
+across the whole result. For example, payload `timestamp` becomes
+`data.data.timestamp` when another payload column already uses `data.timestamp`.
+The same payload field uses the same column in every row; existing non-reserved
+columns are not renamed. This does not change pandas' behavior when a literal
+dotted payload key and a nested payload path already normalize to the same name.
+
+An empty result still has a UTC-aware timestamp index, a timedelta duration
+column and a `$category` column. Choosing CSV export writes the header
+`timestamp,duration,$category` even when there are no rows. The optional export
+prompt and `output.csv` destination are unchanged. Run the offline display and
+CSV regressions with `pytest examples/test_load_dataframe.py` after installing
+pandas; they do not require a running server.
