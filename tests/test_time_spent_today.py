@@ -15,20 +15,21 @@ import pytest
 
 @pytest.fixture
 def local_timezone(monkeypatch):
-    if not hasattr(time, "tzset"):
+    tzset = getattr(time, "tzset", None)
+    if tzset is None:
         pytest.skip("Changing the process local timezone requires time.tzset")
     original = os.environ.get("TZ")
 
     def set_timezone(name):
         monkeypatch.setenv("TZ", name)
-        time.tzset()
+        tzset()
 
     yield set_timezone
     if original is None:
         os.environ.pop("TZ", None)
     else:
         os.environ["TZ"] = original
-    time.tzset()
+    tzset()
 
 
 def run_example(monkeypatch, capsys, now, events):
