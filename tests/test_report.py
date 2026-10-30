@@ -65,9 +65,11 @@ def test_report_total_uses_uncapped_active_duration(count, limit, monkeypatch, c
             return json.loads(
                 json.dumps(
                     [self.result],
-                    default=lambda value: value.total_seconds()
-                    if isinstance(value, timedelta)
-                    else value.isoformat(),
+                    default=lambda value: (
+                        value.total_seconds()
+                        if isinstance(value, timedelta)
+                        else value.isoformat()
+                    ),
                 )
             )
 
