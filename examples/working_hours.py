@@ -10,7 +10,7 @@ import os
 import re
 import socket
 import sys
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Tuple
 
 import aw_client
@@ -23,6 +23,19 @@ OUTPUT_HTML = os.environ.get("OUTPUT_HTML", "").lower() == "true"
 
 td1d = timedelta(days=1)
 day_offset = timedelta(hours=4)
+
+
+def workday_periods(today: date, days_back: int):
+    """Build local calendar boundaries before attaching each instant's UTC offset.
+
+    System-local conversion retains the platform's handling of ambiguous or
+    nonexistent local times if day_offset is changed to fall inside a DST jump.
+    """
+    boundaries = [
+        (datetime.combine(today - i * td1d, time()) + day_offset).astimezone()
+        for i in range(days_back - 1, -2, -1)
+    ]
+    return list(zip(boundaries, boundaries[1:]))
 
 
 def _pretty_timedelta(td: timedelta) -> str:
@@ -102,10 +115,7 @@ def main():
         hostname = socket.gethostname()
 
     now = datetime.now().astimezone()
-    today = (datetime.combine(now.date(), time()) + day_offset).astimezone()
-
-    timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(5)]
-    timeperiods.reverse()
+    timeperiods = workday_periods(now.date(), 5)
 
     res = query(regex, timeperiods, hostname)
 
