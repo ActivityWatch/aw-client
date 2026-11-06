@@ -20,12 +20,11 @@ jobs:
 
     strategy:
       matrix:
-        # Python 3.9 has no setup-python binary for Ubuntu 26.04 (latest).
-        os: [ubuntu-22.04, windows-latest, macOS-latest]
+        os: [ubuntu-24.04, windows-latest, macOS-latest]
         python_version: [3.9]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
 
