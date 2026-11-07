@@ -8,7 +8,7 @@ import pytest
 import requests
 from click.testing import CliRunner
 
-from aw_client import ActivityWatchClient, cli
+from aw_client import ActivityWatchClient, classes, cli
 
 
 @pytest.fixture(params=["report", "canonical"])
@@ -45,7 +45,7 @@ def transport(monkeypatch, command):
             return response
 
     monkeypatch.setattr(cli.aw_client, "ActivityWatchClient", FixtureClient)
-    monkeypatch.setattr(cli, "get_classes", lambda: cli.default_classes)
+    monkeypatch.setattr(cli, "get_classes", lambda *_: classes.default_classes)
     return calls
 
 

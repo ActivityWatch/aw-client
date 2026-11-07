@@ -75,7 +75,9 @@ def test_report_total_uses_uncapped_active_duration(count, limit, monkeypatch, c
 
     client = Client()
     monkeypatch.setattr(
-        cli, "get_classes", lambda: [(["Work"], {"type": "regex", "regex": "Editor"})]
+        cli,
+        "get_classes",
+        lambda *_: [(["Work"], {"type": "regex", "regex": "Editor"})],
     )
     cast(Any, cli.report.callback).__wrapped__(
         SimpleNamespace(client=client),

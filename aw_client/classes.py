@@ -10,6 +10,7 @@ from typing import (
     Any,
     Dict,
     List,
+    Optional,
     Tuple,
 )
 
@@ -65,14 +66,15 @@ default_classes: List[Tuple[CategoryId, CategorySpec]] = [
 ]
 
 
-def get_classes() -> List[Tuple[List[str], dict]]:
+def get_classes(
+    awc: Optional[aw_client.ActivityWatchClient] = None,
+) -> List[Tuple[List[str], dict]]:
     """
-    Get classes from server-side settings.
-    Might throw a 404 if not set yet, in which case we use the default classes as a fallback.
+    Get classes from server-side settings using the supplied client, or a new default client.
+    Missing, empty or unavailable settings fall back to the default classes.
     """
-    # NOTE: Always tries to fetch from prod server,
-    #       which is potentially wrong if testing server is being used.
-    awc = aw_client.ActivityWatchClient(f"get-setting-{random.randint(0, 10000)}")
+    if awc is None:
+        awc = aw_client.ActivityWatchClient(f"get-setting-{random.randint(0, 10000)}")
     try:
         classes = awc.get_setting("classes")
     except Exception:

@@ -15,7 +15,7 @@ from tabulate import tabulate
 import aw_client
 
 from . import queries
-from .classes import default_classes, get_classes
+from .classes import get_classes
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -206,7 +206,7 @@ def report(
 
     bid_browsers: List[str] = []
 
-    classes = get_classes()
+    classes = get_classes(obj.client)
     params = queries.DesktopQueryParams(
         bid_browsers=bid_browsers,
         classes=classes,
@@ -292,7 +292,7 @@ def canonical(
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    classes = default_classes
+    classes = get_classes(obj.client)
 
     query = queries.canonicalEvents(
         queries.DesktopQueryParams(
