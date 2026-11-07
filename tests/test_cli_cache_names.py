@@ -25,7 +25,7 @@ def transport(monkeypatch, command):
         "data": {"app": "editor", "title": "fixture", "$category": ["Work"]},
     }
     payload: List[Any] = (
-        [{"window": {"cat_events": [event], "title_events": [event]}}]
+        [{"window": {"cat_events": [event], "title_events": [event], "duration": 60}}]
         if command == "report"
         else [[event]]
     )
