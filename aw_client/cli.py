@@ -235,10 +235,9 @@ def report(
         title_events = _parse_events(period["window"]["title_events"])
         print_top(title_events, lambda e: e.data["title"], title="Titles", n=limit)
 
-        active_events = _parse_events(period["window"]["title_events"])
         print(
             "Total duration:\t",
-            sum((e.duration for e in active_events), timedelta()),
+            timedelta(seconds=period["window"]["duration"]),
         )
 
 
