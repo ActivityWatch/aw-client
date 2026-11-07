@@ -141,8 +141,10 @@ def query(
 
     if timezone:
         zone_info = ZoneInfo(timezone)
-        start = start.replace(tzinfo=zone_info)
-        stop = stop.replace(tzinfo=zone_info)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=zone_info)
+        if stop.tzinfo is None:
+            stop = stop.replace(tzinfo=zone_info)
 
     result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
     if _json:
