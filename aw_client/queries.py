@@ -128,10 +128,13 @@ def canonicalEvents(
         params.classes = get_classes()
 
     # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
-    classes_str = json.dumps(params.classes, cls=EnhancedJSONEncoder)
+    # AQL accepts literal Unicode but does not decode JSON's \uXXXX escapes.
+    classes_str = json.dumps(
+        params.classes, cls=EnhancedJSONEncoder, ensure_ascii=False
+    )
     classes_str = re.sub(r"\\\\", r"\\", classes_str)
 
-    cat_filter_str = json.dumps(params.filter_classes)
+    cat_filter_str = json.dumps(params.filter_classes, ensure_ascii=False)
 
     # For simplicity, we assume that bid_window and bid_android are exchangeable (note however it needs special treatment)
     bid_window = (
