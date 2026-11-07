@@ -149,10 +149,21 @@ def query(
         print(json.dumps(result))
     else:
         for period in result:
+            # AQL can return any JSON value, not only lists of events.
+            if not (
+                isinstance(period, list)
+                and all(
+                    isinstance(event, dict)
+                    and type(event.get("duration")) in (int, float)
+                    and isinstance(event.get("data"), dict)
+                    for event in period
+                )
+            ):
+                print(json.dumps(period))
+                continue
+
             print(f"Showing 10 out of {len(period)} events:")
             for event in period[:10]:
-                event.pop("id")
-                event.pop("timestamp")
                 print(
                     " - Duration: {} \tData: {}".format(
                         str(timedelta(seconds=event["duration"])).split(".")[0],
