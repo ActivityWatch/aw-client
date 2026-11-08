@@ -30,6 +30,8 @@ mypy = "*"
 ruff = "*"
 pytest = "*"
 pytest-cov = "*"
+# zoneinfo regressions also run from the parent repo's Windows release builds.
+tzdata = "*"
 types-requests = "*"
 types-tabulate = "*"
 gspread = "*"  # used in examples
