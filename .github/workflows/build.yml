@@ -43,9 +43,6 @@ jobs:
 
     - name: Run tests
       shell: bash
-      env:
-        # Require the declared tzdata dependency, even on hosts with system data.
-        PYTHONTZPATH: ''
       run: |
         source venv/bin/activate || source venv/Scripts/activate
         make test

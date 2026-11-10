@@ -24,14 +24,14 @@ click = "^8.0"
 tabulate = "*"
 tomlkit = "*"
 typing-extensions = "*"
+# Windows has no system IANA database, so `query --timezone` needs it for zoneinfo.
+tzdata = { version = "*", markers = "sys_platform == 'win32'" }
 
 [tool.poetry.group.dev.dependencies]
 mypy = "*"
 ruff = "*"
 pytest = "*"
 pytest-cov = "*"
-# zoneinfo regressions also run from the parent repo's Windows release builds.
-tzdata = "*"
 types-requests = "*"
 types-tabulate = "*"
 gspread = "*"  # used in examples
