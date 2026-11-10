@@ -49,7 +49,11 @@ def main() -> None:
     for e in events:
         e["$category"] = " > ".join(e["$category"])
 
-    df = pd.json_normalize(events)
+    df = (
+        pd.json_normalize(events)
+        if events
+        else pd.DataFrame(columns=["timestamp", "duration", "$category"])
+    )
     df["timestamp"] = pd.to_datetime(df["timestamp"].apply(iso8601.parse_date))
     df.set_index("timestamp", inplace=True)
 
