@@ -38,6 +38,7 @@ def test_empty_and_ordinary_results(monkeypatch, tmp_path, export, empty):
     assert len(frame) == len(events)
     assert str(frame.index.tz) == "UTC"
     assert "duration" in frame.columns
+    assert pd.api.types.is_timedelta64_dtype(frame["duration"])
     if not empty:
         assert frame["$category"].tolist() == ["Work"]
         assert frame["duration"].iloc[0] == pd.Timedelta(seconds=60)
