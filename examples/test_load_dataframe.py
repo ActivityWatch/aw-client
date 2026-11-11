@@ -36,6 +36,7 @@ def test_empty_and_ordinary_results(monkeypatch, tmp_path, export, empty):
     frame = next(value for value in frames if isinstance(value, pd.DataFrame))
     assert frame.index.name == "timestamp"
     assert len(frame) == len(events)
+    assert str(frame.index.tz) == "UTC"
     assert "duration" in frame.columns
     if not empty:
         assert frame["$category"].tolist() == ["Work"]

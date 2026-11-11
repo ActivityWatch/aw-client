@@ -54,7 +54,9 @@ def main() -> None:
         if events
         else pd.DataFrame(columns=["timestamp", "duration", "$category"])
     )
-    df["timestamp"] = pd.to_datetime(df["timestamp"].apply(iso8601.parse_date))
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"].apply(iso8601.parse_date), utc=True
+    )
     df.set_index("timestamp", inplace=True)
 
     print(df)
