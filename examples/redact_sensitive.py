@@ -1,11 +1,18 @@
 """
-Interactive script to redact sensitive data.
-Be careful to not delete stuff you want to keep!
+Interactive preview of sensitive-data redaction.
+
+Wet writes are refused: the client/server APIs have no common atomic event
+replacement operation. Delete-then-insert can lose history on failure, while
+inserting with an existing ID has backend-dependent behavior. Export/back up
+history before using a tool with a verified replacement contract.
+
+The preview prints raw before-values, including sensitive data. Terminal output
+and captured logs are NOT sanitized.
 
 Issues/improvements:
  - If an event matches the sensitive string, only the sensitive field will be redacted (so if the title matches but not the URL, the URL will remain unredacted)
  - One might not want to redact to the non-informative 'REDACTED', but instead to a string with secret meaning.
- - No preview of the events/strings to be redacted.
+
 """
 
 import re
@@ -16,7 +23,6 @@ from typing import (
     Pattern,
     Set,
     Union,
-    cast,
 )
 
 from aw_client import ActivityWatchClient
@@ -30,8 +36,7 @@ DRYRUN = True
 
 def main():
     global DRYRUN
-    if "--wet" in sys.argv:
-        DRYRUN = False
+    DRYRUN = "--wet" not in sys.argv
 
     global aw
     aw = ActivityWatchClient(testing=True)
@@ -56,18 +61,21 @@ def main():
         pattern = input("Enter a string indicating sensitive content: ").lower()
     else:
         pattern = re.compile(
-            input("Enter a regex indicating sensitive content: ").lower()
+            input("Enter a regex indicating sensitive content: "), re.IGNORECASE
         )
 
     print("")
     if DRYRUN:
         print(
-            "NOTE: Performing a dry run, no events will be modified. Run with --wet to modify events."
+            "NOTE: Performing a dry run, no events will be modified. Wet writes are unsupported."
         )
     else:
         print(
-            "WARNING: Note that this performs an operation that cannot be undone. We strongly recommend that you backup/export your data before proceeding."
+            "WARNING: Wet writes are unsupported without atomic event replacement. Matching events can be previewed, but no events will be modified."
         )
+    print(
+        "WARNING: Preview prints raw sensitive values; captured logs are not sanitized."
+    )
     input("Press ENTER to continue, or Ctrl-C to abort")
 
     if bid_to_redact == "*":
@@ -102,11 +110,12 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
                 print(f"Data after:  {e.data}")
 
                 if DRYRUN:
-                    print("DRYRUN, would do: aw.insert_event(bucket_id, e)")
+                    print("DRYRUN, preview only; no events modified")
                 else:
-                    aw.delete_event(bucket_id, cast(int, e_before.id))
-                    aw.insert_event(bucket_id, e)
-                    print("Redacted event")
+                    raise RuntimeError(
+                        "Wet redaction is unsupported: no common atomic event "
+                        "replacement API. No events were modified."
+                    )
 
 
 def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
@@ -116,7 +125,7 @@ def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
                 if pattern in v.lower():
                     return True
             else:
-                if pattern.findall(v.lower()):
+                if pattern.search(v):
                     return True
     return False
 
@@ -129,7 +138,7 @@ def _redact_event(e: Event, pattern: Union[str, Pattern]) -> Event:
                 if pattern in v.lower():
                     e.data[k] = REDACTED
             else:
-                if pattern.findall(v.lower()):
+                if pattern.search(v):
                     e.data[k] = REDACTED
     return e
 
