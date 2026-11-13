@@ -229,7 +229,7 @@ def _client_with_server_starting_at(monkeypatch, start_at):
     client = ActivityWatchClient("aw-test-client", testing=True)
     attempts = []
 
-    def fake_get_info():
+    def fake_get_info(*, timeout=None):
         attempts.append(clock.now)
         if clock.now < start_at:
             raise RequestsConnectionError("server not up yet")
@@ -254,6 +254,6 @@ def test_wait_for_start_raises_at_timeout(monkeypatch):
     client, clock, attempts = _client_with_server_starting_at(monkeypatch, 11)
     with pytest.raises(Exception, match="did not start in time"):
         client.wait_for_start(timeout=10)
-    # Never sleeps past the deadline, and makes a final attempt right at it
+    # Never sleeps past the deadline or starts an HTTP attempt with no budget.
     assert clock.now == pytest.approx(10)
-    assert attempts[-1] == pytest.approx(10)
+    assert 9 <= attempts[-1] < 10

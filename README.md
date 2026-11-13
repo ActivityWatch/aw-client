@@ -94,6 +94,41 @@ Local API-key discovery and proxy bypass use the configured URL's actual host
 and port, not the default loopback address. Remote URLs do not receive a key
 read from the local server configuration.
 
+## HTTP timeouts
+
+All HTTP verbs use a finite **10-second connect/read inactivity timeout** by
+default. Set `ActivityWatchClient(..., request_timeout=30)` to change the
+client-wide policy, including queued heartbeats and bucket registration.
+The CLI exposes the same policy as `aw-client --request-timeout 120 query ...`.
+This replaces previously unbounded HTTP waits; callers of large event reads,
+bulk inserts, or CLI reports may need a larger policy on slow servers.
+Values must be positive and finite. A timeout raises `requests.Timeout`;
+queued heartbeat timeouts retain the pending SQLite request for replay.
+
+`get_info`, `query`, `import_bucket`, `export_bucket` and `export_all` accept a
+keyword-only `timeout=` override, for example `client.export_all(timeout=120)`.
+`None` means use the client's policy, **not** disable timeouts. A long operation's
+override does not change the queue's policy. Other operations can use a larger
+client-wide policy.
+
+`wait_for_start(timeout=10)` retries connection errors and timeouts until its
+startup budget expires. Each attempt uses at most half the remaining budget
+because Requests applies its timeout separately to connect and read. It does
+not start another request after the deadline.
+
+`disconnect()` stops and joins the worker; it does not drain the queue. Against
+an accepted-but-silent loopback peer, the in-flight request is limited by the
+configured read timeout, and registration stops between buckets. Remaining
+requests stay on disk for reconnect. A stop requested during thread startup is
+also preserved. With the default policy, a silent connected peer therefore
+normally adds at most 10 seconds to shutdown (up to another connect timeout if
+connection establishment is still in progress), plus scheduling overhead.
+
+These are socket inactivity limits, **not strict whole-operation deadlines**.
+DNS resolution, multiple connection addresses, redirects, or a response that
+keeps trickling bytes can exceed them; the joining shutdown does not impose a
+separate wall-clock cutoff for those cases.
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
