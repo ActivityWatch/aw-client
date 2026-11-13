@@ -1,8 +1,11 @@
 import sys
 import os
 import logging
+import errno
 
-if sys.platform != "win32":
+if sys.platform == "win32":
+    import msvcrt
+else:
     import fcntl
 
 from aw_core.dirs import get_cache_dir
@@ -21,17 +24,18 @@ class SingleInstance:
         self.lockfile = os.path.join(get_cache_dir("client_locks"), client_name)
         logger.debug("SingleInstance lockfile: " + self.lockfile)
         if sys.platform == "win32":
+            fd = os.open(self.lockfile, os.O_CREAT | os.O_RDWR)
             try:
-                # file already exists, we try to remove (in case previous execution was interrupted)
-                if os.path.exists(self.lockfile):
-                    os.unlink(self.lockfile)
-                    self.fd = os.open(self.lockfile, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                # Keep the file in place: ownership is the OS lock, not its existence.
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             except OSError as e:
-                if e.errno == 13:
+                os.close(fd)
+                if e.errno == errno.EACCES:
                     logger.error("Another instance is already running, quitting.")
                     sys.exit(-1)
                 else:
-                    raise e
+                    raise
+            self.fd = fd
         else:  # non Windows
             self.fp = open(self.lockfile, "w")
             try:
@@ -44,4 +48,3 @@ class SingleInstance:
         if sys.platform == "win32":
             if hasattr(self, "fd"):
                 os.close(self.fd)
-                os.unlink(self.lockfile)
