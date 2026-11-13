@@ -190,6 +190,7 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
+        self._heartbeat_endpoints = {}  # type: Dict[str, str]
         # Committed heartbeats whose queue write failed, retried in order before the next commit.
         # Bounded so a sustained failure can't grow memory without limit; the oldest are dropped.
         self._unqueued_heartbeats = {}  # type: Dict[str, Deque[Tuple[str, dict]]]
@@ -371,6 +372,7 @@ class ActivityWatchClient:
             # Pre-merge heartbeats
             if bucket_id not in self.last_heartbeat:
                 self.last_heartbeat[bucket_id] = event
+                self._heartbeat_endpoints[bucket_id] = endpoint
                 return None
 
             last_heartbeat = self.last_heartbeat[bucket_id]
@@ -392,7 +394,8 @@ class ActivityWatchClient:
                     self.last_heartbeat[bucket_id] = merge
             else:
                 data = last_heartbeat.to_json_dict()
-                if not self._queue_heartbeat(bucket_id, endpoint, data):
+                previous_endpoint = self._heartbeat_endpoints[bucket_id]
+                if not self._queue_heartbeat(bucket_id, previous_endpoint, data):
                     # Can't merge with the new event, so hold the old one for retry.
                     unqueued = self._unqueued_heartbeats.setdefault(
                         bucket_id, deque(maxlen=_MAX_UNQUEUED_HEARTBEATS)
@@ -404,8 +407,9 @@ class ActivityWatchClient:
                                 f"Unqueued heartbeat buffer for {bucket_id} is full, dropping oldest heartbeats"
                             )
                         self._dropped_heartbeats[bucket_id] = dropped + 1
-                    unqueued.append((endpoint, data))
+                    unqueued.append((previous_endpoint, data))
                 self.last_heartbeat[bucket_id] = event
+            self._heartbeat_endpoints[bucket_id] = endpoint
         else:
             self._post(endpoint, event.to_json_dict())
 
@@ -530,15 +534,41 @@ class ActivityWatchClient:
             self.request_queue.start()
 
     def disconnect(self):
-        self.request_queue.stop()
-        self.request_queue.join()
+        """Persist observed heartbeat tails and stop the worker (not an HTTP drain).
 
-        # Throw away old thread object, create new one since same thread cannot be started twice
-        self.request_queue = RequestQueue(
-            self, persistqueue_path=self.request_queue.persistqueue_path
-        )
-        # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
-        self._warned_queue_before_connect = False
+        Raises OSError if storage rejects a pending heartbeat. The worker is
+        still stopped, but unwritten intervals remain in memory so disconnect()
+        can be retried. Stop heartbeat producers before calling this method.
+        This does not protect against abrupt process termination.
+        """
+        failed = False
+        try:
+            for bucket_id in list(self.last_heartbeat):
+                event = self.last_heartbeat[bucket_id]
+                endpoint = self._heartbeat_endpoints[bucket_id]
+                if self._queue_heartbeat(bucket_id, endpoint, event.to_json_dict()):
+                    del self.last_heartbeat[bucket_id]
+                    del self._heartbeat_endpoints[bucket_id]
+                else:
+                    failed = True
+        finally:
+            self.request_queue.stop()
+            if self.request_queue.ident is not None:
+                self.request_queue.join()
+
+            # Throw away old thread object, create new one since same thread cannot be started twice.
+            # Also do this after a failed write so reconnect() remains usable; the
+            # heartbeat caches above retain only the intervals still needing a write.
+            self.request_queue = RequestQueue(
+                self, persistqueue_path=self.request_queue.persistqueue_path
+            )
+            # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
+            self._warned_queue_before_connect = False
+
+        if failed:
+            raise OSError(
+                "Could not persist pending heartbeats; retry disconnect() before exiting"
+            )
 
     def wait_for_start(self, timeout: int = 10) -> None:
         """Wait for the server to start by trying to get the server info."""
