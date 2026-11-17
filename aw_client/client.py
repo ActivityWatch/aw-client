@@ -471,11 +471,15 @@ class ActivityWatchClient:
         query: str,
         timeperiods: List[Tuple[datetime, datetime]],
         name: Optional[str] = None,
-        cache: bool = False,
+        cache: Optional[bool] = None,
     ) -> List[Any]:
         endpoint = "query/"
-        # Both servers accept boolean query strings; Rust does not accept 0/1.
-        params = {"cache": str(cache).lower()}  # type: Dict[str, Any]
+        params = {}  # type: Dict[str, Any]
+        if cache is not None:
+            # Send only when the caller chose; absent means the server default
+            # (cache on). Both servers accept boolean query strings; Rust does
+            # not accept 0/1.
+            params["cache"] = str(cache).lower()
         if cache:
             if not name:
                 raise Exception(

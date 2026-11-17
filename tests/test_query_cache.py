@@ -60,7 +60,7 @@ def periods():
 @pytest.mark.parametrize(
     "options,expected_params",
     [
-        ({}, {"cache": ["false"]}),
+        ({}, {}),
         ({"cache": False}, {"cache": ["false"]}),
         ({"cache": False, "name": "report"}, {"cache": ["false"]}),
         (
