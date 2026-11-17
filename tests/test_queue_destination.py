@@ -116,6 +116,29 @@ def test_first_nondefault_destination_adopts_legacy_backlog(
     assert all(r.levelno < 30 for r in caplog.records), "no warning after adoption"
 
 
+@pytest.mark.parametrize("legacy_backlog", [False, True])
+def test_nondefault_client_never_adopts_default_live_queue(
+    config, tmp_path, legacy_backlog
+):
+    """After the default client has opened the legacy path it is a live queue."""
+    if legacy_backlog:
+        _legacy_queue(tmp_path)
+    local = ActivityWatchClient("queue-test", port=5600)
+    assert local.request_queue.add_request(ENDPOINT, {"data": {"app": "LOCAL"}})
+    remote = ActivityWatchClient("queue-test", host="aw.example", port=5600)
+    assert remote.request_queue.persistqueue_path != (
+        local.request_queue.persistqueue_path
+    )
+    assert remote.request_queue._get_next() is None
+    assert Path(local.request_queue.persistqueue_path).exists()
+    reopened = ActivityWatchClient("queue-test", port=5600)
+    pending = [reopened.request_queue._get_next()]
+    if legacy_backlog:
+        reopened.request_queue._task_done()
+        pending.append(reopened.request_queue._get_next())
+    assert QueuedRequest(ENDPOINT, {"data": {"app": "LOCAL"}}) in pending
+
+
 def test_legacy_backlog_goes_to_exactly_one_destination(config, tmp_path):
     _legacy_queue(tmp_path)
     first = ActivityWatchClient("queue-test", port=15601)

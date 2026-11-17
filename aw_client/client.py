@@ -92,6 +92,10 @@ def _queue_destination(address: str) -> Tuple[str, str, int, str]:
     return destination.scheme.lower(), host, port, destination.path.rstrip("/")
 
 
+def _default_owned_marker(legacy_path: str) -> str:
+    return legacy_path + ".default-owned"
+
+
 def _adopt_legacy_queue(legacy_path: str, destination_path: str) -> None:
     """Hand an unbound pre-upgrade queue to the first non-default destination.
 
@@ -100,8 +104,17 @@ def _adopt_legacy_queue(legacy_path: str, destination_path: str) -> None:
     there. Rename (atomic, no copy) it to that destination's queue once, so a
     backlog is neither stranded nor replayed to two servers. The default local
     destination keeps the legacy path itself and never reaches this.
+
+    Once the default destination has opened the legacy path it is that
+    destination's live queue, not a pre-upgrade backlog, and it is marked as
+    such: never adopt a marked queue, or its pending local heartbeats would
+    be sent to another server.
     """
-    if not os.path.isdir(legacy_path) or os.path.exists(destination_path):
+    if (
+        not os.path.isdir(legacy_path)
+        or os.path.exists(destination_path)
+        or os.path.exists(_default_owned_marker(legacy_path))
+    ):
         return
     try:
         os.rename(legacy_path, destination_path)
@@ -698,6 +711,18 @@ class RequestQueue(threading.Thread):
                 # The sole compatibility owner of an unbound legacy backlog.
                 # Keep its path (no move/open-file race with old clients).
                 persistqueue_path = legacy_path
+                # Mark it before opening it, so a later non-default client
+                # never adopts this live queue (see _adopt_legacy_queue).
+                try:
+                    with open(_default_owned_marker(legacy_path), "a"):
+                        pass
+                except OSError as e:
+                    logger.warning(
+                        "Could not mark legacy queue %s as owned by the default "
+                        "server (%s); a non-default client may adopt it",
+                        legacy_path,
+                        e,
+                    )
             else:
                 destination_id = hashlib.sha256(
                     json.dumps(destination).encode("utf-8")
