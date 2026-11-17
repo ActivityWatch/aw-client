@@ -69,7 +69,7 @@ def test_named_cache_reaches_sdk_transport(command, transport):
     uncached = invoke(command)
     assert uncached.exit_code == 0, uncached.exception
     assert "fixture" in uncached.output
-    assert "name" not in transport[0][2]
+    assert transport[0][2] == {}  # unset: server default, not an explicit false
     uncached_body = transport[0][1]
     transport.clear()
 
@@ -79,7 +79,7 @@ def test_named_cache_reaches_sdk_transport(command, transport):
     assert len(transport) == 1
     endpoint, body, params = transport[0]
     assert endpoint == "query/"
-    assert params == {"name": "fixture-query", "cache": 1}
+    assert params == {"name": "fixture-query", "cache": "true"}
     assert body == uncached_body
     assert "fixture-host" in "\n".join(body["query"])
     start, stop = body["timeperiods"][0].split("/")
