@@ -82,21 +82,75 @@ def test_profiles_remain_isolated(config):
     )
 
 
-def test_default_local_reuses_legacy_backlog_but_remote_does_not(
-    config, tmp_path, caplog
-):
+def _legacy_queue(tmp_path):
     legacy_path = tmp_path / "queued" / "queue-test.v1.persistqueue"
     legacy = persistqueue.FIFOSQLiteQueue(str(legacy_path), auto_commit=False)
     legacy.put(QueuedRequest(ENDPOINT, PAYLOAD))
-    config["server"]["baseurl"] = "https://remote.example/private"
-    remote = ActivityWatchClient("queue-test")
-    assert remote.request_queue._get_next() is None
-    assert legacy_path.is_dir(), "ambiguous legacy backlog must not be removed"
-    assert "legacy" in caplog.text.lower()
+    return legacy_path
+
+
+def test_default_local_keeps_legacy_backlog(config, tmp_path):
+    legacy_path = _legacy_queue(tmp_path)
     config["server"]["baseurl"] = "http://127.0.0.1:5600/"
     local = ActivityWatchClient("queue-test")
     assert local.request_queue.persistqueue_path == str(legacy_path)
     assert local.request_queue._get_next() == QueuedRequest(ENDPOINT, PAYLOAD)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"host": "localhost", "port": 5600},
+        {"host": "127.0.0.1", "port": 15601},
+        {"host": "aw.example", "port": 5600},
+    ],
+)
+def test_first_nondefault_destination_adopts_legacy_backlog(
+    config, tmp_path, caplog, kwargs
+):
+    legacy_path = _legacy_queue(tmp_path)
+    client = ActivityWatchClient("queue-test", **kwargs)
+    assert client.request_queue.persistqueue_path != str(legacy_path)
+    assert client.request_queue._get_next() == QueuedRequest(ENDPOINT, PAYLOAD)
+    assert not legacy_path.exists(), "adopted by rename, not copied"
+    assert all(r.levelno < 30 for r in caplog.records), "no warning after adoption"
+
+
+def test_legacy_backlog_goes_to_exactly_one_destination(config, tmp_path):
+    _legacy_queue(tmp_path)
+    first = ActivityWatchClient("queue-test", port=15601)
+    second = ActivityWatchClient("queue-test", port=15602)
+    assert first.request_queue._get_next() == QueuedRequest(ENDPOINT, PAYLOAD)
+    assert second.request_queue._get_next() is None
+
+
+def test_adoption_is_one_time_and_restart_keeps_backlog(config, tmp_path):
+    _legacy_queue(tmp_path)
+    ActivityWatchClient("queue-test", port=15601)
+    again = ActivityWatchClient("queue-test", port=15601)
+    assert again.request_queue._get_next() == QueuedRequest(ENDPOINT, PAYLOAD)
+
+
+def test_failed_adoption_leaves_legacy_in_place_and_warns(
+    config, tmp_path, monkeypatch, caplog
+):
+    legacy_path = _legacy_queue(tmp_path)
+
+    def refuse(*args):
+        raise PermissionError("synthetic")
+
+    monkeypatch.setattr(client_module.os, "rename", refuse)
+    client = ActivityWatchClient("queue-test", port=15601)
+    assert client.request_queue._get_next() is None
+    assert legacy_path.is_dir()
+    assert "could not adopt" in caplog.text.lower()
+
+
+def test_profiles_do_not_adopt_each_others_legacy_backlog(config, tmp_path):
+    legacy_path = _legacy_queue(tmp_path)
+    other = ActivityWatchClient("queue-test", port=15601, profile="research")
+    assert other.request_queue._get_next() is None
+    assert legacy_path.is_dir()
 
 
 def test_explicit_and_configured_local_destination_share_queue(config):
@@ -128,19 +182,6 @@ def test_reconnect_preserves_destination_backlog(config, monkeypatch):
     client.disconnect()
     assert client.request_queue.persistqueue_path == path
     assert client.request_queue._get_next() == QueuedRequest(ENDPOINT, PAYLOAD)
-
-
-def test_nondefault_legacy_queue_is_left_unchanged(config, tmp_path):
-    legacy_path = tmp_path / "queued" / "queue-test.v1.persistqueue"
-    legacy = persistqueue.FIFOSQLiteQueue(str(legacy_path), auto_commit=False)
-    legacy.put(QueuedRequest(ENDPOINT, PAYLOAD))
-    before = {p.name: p.read_bytes() for p in legacy_path.iterdir() if p.is_file()}
-    client = ActivityWatchClient("queue-test", port=15601)
-    assert client.request_queue._get_next() is None
-    assert {
-        p.name: p.read_bytes() for p in legacy_path.iterdir() if p.is_file()
-    } == before
-    assert legacy.get(block=False) == QueuedRequest(ENDPOINT, PAYLOAD)
 
 
 def test_explicit_persistence_path_remains_caller_owned(config, tmp_path):

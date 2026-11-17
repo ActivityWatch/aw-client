@@ -118,15 +118,18 @@ Different hostnames are kept separate even when DNS resolves them to the same
 machine; path case and escaping are preserved. Non-default destination names
 use a SHA-256 digest, not a raw URL or credentials.
 
-For compatibility, the default local destination retains its legacy queue:
-`http://127.0.0.1:5600` (port `5666` for the testing profile), without a path
-prefix. Other destinations never adopt an old unbound queue automatically:
-its requests contain no record of which server they were intended for. The
-legacy directory is left untouched and a warning is logged. If a non-default
-server has an old backlog, preserve it and verify its intended destination
-before arranging an explicit recovery; do not blindly copy it into another
-server's queue. An explicit `RequestQueue(..., persistqueue_path=...)` remains
-caller-owned, including responsibility for destination isolation.
+For compatibility, the default local destination (`http://127.0.0.1:5600`, port
+`5666` for the testing profile, no path prefix) keeps using the pre-upgrade
+queue directory. Before this change every destination shared that one queue, so
+the first client started for any other destination (a `localhost` hostname, a
+custom port, `baseurl` or named profile server) adopts the old backlog once, by
+renaming the directory to its own queue; nothing is copied, so the backlog is
+never replayed to two servers, and later starts reuse it. The old queue records
+no destination, so adoption goes to whichever non-default server starts first,
+which matches where a shared queue would have been drained before. If the rename
+fails (for example a permissions error) a warning is logged and the backlog
+stays in the old directory. An explicit `RequestQueue(..., persistqueue_path=...)`
+remains caller-owned, including responsibility for destination isolation.
 
 Do not run an old client release against the same queue directories while
 retargeting servers: old versions do not enforce this destination boundary.

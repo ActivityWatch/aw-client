@@ -92,6 +92,33 @@ def _queue_destination(address: str) -> Tuple[str, str, int, str]:
     return destination.scheme.lower(), host, port, destination.path.rstrip("/")
 
 
+def _adopt_legacy_queue(legacy_path: str, destination_path: str) -> None:
+    """Hand an unbound pre-upgrade queue to the first non-default destination.
+
+    Before destination-bound queues every destination shared the legacy queue,
+    so a client pointed at a custom host/port/profile server had its backlog
+    there. Rename (atomic, no copy) it to that destination's queue once, so a
+    backlog is neither stranded nor replayed to two servers. The default local
+    destination keeps the legacy path itself and never reaches this.
+    """
+    if not os.path.isdir(legacy_path) or os.path.exists(destination_path):
+        return
+    try:
+        os.rename(legacy_path, destination_path)
+    except OSError as e:
+        logger.warning(
+            "Could not adopt legacy queue %s for this server (%s); "
+            "pending heartbeats stay in the legacy queue",
+            legacy_path,
+            e,
+        )
+    else:
+        logger.info(
+            "Adopted legacy heartbeat queue %s for this server destination",
+            legacy_path,
+        )
+
+
 def _dt_is_tzaware(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
 
@@ -680,12 +707,7 @@ class RequestQueue(threading.Thread):
                     f"{self.client.client_name}{suffix}.v{self.VERSION}."
                     f"destination-{destination_id}.persistqueue",
                 )
-                if os.path.exists(legacy_path):
-                    logger.warning(
-                        "Leaving unbound legacy queue at %s untouched; "
-                        "only the default local destination may consume it",
-                        legacy_path,
-                    )
+                _adopt_legacy_queue(legacy_path, persistqueue_path)
 
         logger.debug(f"queue path '{persistqueue_path}'")
         self.persistqueue_path = persistqueue_path
