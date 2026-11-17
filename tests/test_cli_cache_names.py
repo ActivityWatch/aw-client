@@ -37,7 +37,7 @@ def transport(monkeypatch, command):
         def __init__(self, *args, **kwargs):
             pass
 
-        def _post(self, endpoint, data, params=None, timeout=None):
+        def _post(self, endpoint, data, params=None, *, timeout=None):
             calls.append((endpoint, data, params))
             response = requests.Response()
             response.status_code = 200
