@@ -1,12 +1,15 @@
 """Literal bucket-id routing against the default server, aw-server-rust.
 
 Opt-in: set ``AW_SERVER_RUST_BIN`` to an ``aw-server`` binary built from
-aw-server-rust. The server runs in ``--testing`` mode on a throwaway port and
-datastore, so no real data is touched.
+aw-server-rust. The server runs in ``--testing`` mode on a free port (or ``AW_SERVER_RUST_PORT``) with a
+throwaway datastore. The fixture refuses an occupied port and only proceeds
+once its own child answers, so the destructive tests never reach another
+server.
 """
 
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -21,7 +24,6 @@ from aw_client import ActivityWatchClient
 from test_bucket_paths import BUCKET_IDS
 
 BIN = os.environ.get("AW_SERVER_RUST_BIN")
-PORT = int(os.environ.get("AW_SERVER_RUST_PORT", "5699"))
 START = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 END = START + timedelta(minutes=1)
 
@@ -30,29 +32,48 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _port_in_use(port: int) -> bool:
+    with socket.socket() as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 @pytest.fixture(scope="module")
 def rust_server():
     assert BIN
+    port = int(os.environ.get("AW_SERVER_RUST_PORT") or _free_port())
+    # The tests force-delete buckets: never talk to a server we did not start.
+    if _port_in_use(port):
+        pytest.fail(f"port {port} is already in use; refusing to write to that server")
     tmp = tempfile.mkdtemp(prefix="aw-rust-bucket-paths-")
     env = dict(os.environ)
     env["XDG_DATA_HOME"] = env["XDG_CONFIG_HOME"] = env["XDG_CACHE_HOME"] = tmp
     env["HOME"] = tmp
     proc = subprocess.Popen(
-        [BIN, "--testing", "--port", str(PORT), "--dbpath", f"{tmp}/test.db"],
+        [BIN, "--testing", "--port", str(port), "--dbpath", f"{tmp}/test.db"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     try:
         for _ in range(100):
+            if proc.poll() is not None:
+                pytest.fail(f"aw-server-rust exited with {proc.returncode}")
             try:
-                requests.get(f"http://127.0.0.1:{PORT}/api/0/info", timeout=1)
-                break
+                info = requests.get(f"http://127.0.0.1:{port}/api/0/info", timeout=1)
+                if info.ok and info.json().get("testing") is True:
+                    break
             except requests.RequestException:
-                time.sleep(0.2)
+                pass
+            time.sleep(0.2)
         else:
             pytest.fail("aw-server-rust did not start")
-        yield PORT
+        yield port
     finally:
         proc.terminate()
         proc.wait(timeout=10)
