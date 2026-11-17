@@ -568,3 +568,213 @@ def test_full_desktop_repeated_query_execution(
             assert result["browser"]["urls"] == []
         assert result["events"][0]["data"]["$category"] == ["Work"]
         assert asdict(params) == before
+
+
+@pytest.mark.parametrize(
+    "browser,app",
+    [
+        ("chromium", "Chromium"),
+        ("chromium", "chromium.exe"),
+        ("arc", "Arc"),
+        ("arc", "Arc.exe"),
+        ("arc", "arc"),
+        ("arc", "arc.exe"),
+        ("dia", "Dia"),
+        ("dia", "Dia.exe"),
+        ("dia", "dia"),
+        ("dia", "dia.exe"),
+        ("helium", "Helium"),
+        ("helium", "helium"),
+        ("helium", "helium.exe"),
+        ("helium", "net.imput.helium"),
+        ("chrome", "Google Chrome"),
+        ("firefox", "Firefox"),
+    ],
+)
+@pytest.mark.parametrize("synced", [False, True])
+def test_browser_bucket_alias_duration(datastore, browser, app, synced):
+    suffix = "-synced-from-desk" if synced else "_desk"
+    bid = f"aw-watcher-web-{browser}{suffix}"
+    _insert(
+        datastore,
+        "aw-watcher-window_desk",
+        "currentwindow",
+        "desk",
+        [(0, 5, {"app": app, "title": "page"})],
+    )
+    _insert(
+        datastore,
+        "aw-watcher-afk_desk",
+        "afkstatus",
+        "desk",
+        [(0, 5, {"status": "not-afk"})],
+    )
+    _insert(
+        datastore,
+        bid,
+        "web.tab.current",
+        "desk",
+        [(0, 5, {"url": "https://example.test/page", "title": "page"})],
+    )
+    params = DesktopQueryParams(
+        bid_window="aw-watcher-window_desk",
+        bid_afk="aw-watcher-afk_desk",
+        bid_browsers=[bid],
+        classes=CLASSES,
+    )
+    result = query2.query(
+        "test", fullDesktopQuery(params), _t(-60), _t(24 * 60), datastore
+    )
+    assert result["window"]["duration"] == timedelta(seconds=300)
+    assert result["browser"]["duration"] == timedelta(seconds=300)
+    assert [event["data"]["url"] for event in result["browser"]["urls"]] == [
+        "https://example.test/page"
+    ]
+
+
+@pytest.mark.parametrize(
+    "browser,app",
+    [
+        ("chromium", "Chromium"),
+        ("arc", "Arc"),
+        ("dia", "Dia"),
+        ("helium", "Helium"),
+        ("brave", "Brave-browser"),
+        ("brave", "brave.exe"),
+    ],
+)
+@pytest.mark.parametrize("dedicated", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_browser_bucket_alias_chrome_fallback_and_precedence(
+    datastore, browser, app, dedicated, reverse
+):
+    _insert(
+        datastore,
+        "aw-watcher-window_desk",
+        "currentwindow",
+        "desk",
+        [
+            (0, 5, {"app": app, "title": "fork"}),
+            (5, 10, {"app": "Google Chrome", "title": "chrome"}),
+        ],
+    )
+    _insert(
+        datastore,
+        "aw-watcher-afk_desk",
+        "afkstatus",
+        "desk",
+        [(0, 10, {"status": "not-afk"})],
+    )
+    chrome_bid = "aw-watcher-web-chrome_desk"
+    _insert(
+        datastore,
+        chrome_bid,
+        "web.tab.current",
+        "desk",
+        [(0, 10, {"url": "https://generic.test/page", "title": "generic"})],
+    )
+    bids = [chrome_bid]
+    if dedicated:
+        dedicated_bid = f"aw-watcher-web-{browser}_desk"
+        _insert(
+            datastore,
+            dedicated_bid,
+            "web.tab.current",
+            "desk",
+            [(0, 10, {"url": "https://dedicated.test/page", "title": "dedicated"})],
+        )
+        bids.append(dedicated_bid)
+    if reverse:
+        bids.reverse()
+    params = DesktopQueryParams(
+        bid_window="aw-watcher-window_desk",
+        bid_afk="aw-watcher-afk_desk",
+        bid_browsers=bids,
+        classes=CLASSES,
+    )
+    result = query2.query(
+        "test", fullDesktopQuery(params), _t(-60), _t(24 * 60), datastore
+    )
+    assert result["browser"]["duration"] == timedelta(seconds=600)
+    by_url = {
+        event["data"]["url"]: event["duration"].total_seconds()
+        for event in result["browser"]["urls"]
+    }
+    assert by_url == (
+        {"https://generic.test/page": 300, "https://dedicated.test/page": 300}
+        if dedicated
+        else {"https://generic.test/page": 600}
+    )
+
+
+@pytest.mark.parametrize(
+    "watcher",
+    ["notchrome", "chromiumish", "search", "media", "unknown", "chrome-helper"],
+)
+def test_browser_bucket_alias_rejects_partial_watcher_names(watcher):
+    assert (
+        browsersWithBuckets([f"aw-watcher-web-{watcher}_chrome-arc-dia-helium"]) == []
+    )
+
+
+def test_browser_bucket_alias_hostname_not_a_browser():
+    assert browsersWithBuckets(["aw-watcher-web-firefox_chromium-arc-dia-helium"]) == [
+        ("firefox", "aw-watcher-web-firefox_chromium-arc-dia-helium")
+    ]
+    assert browsersWithBuckets(
+        ["aw-watcher-web-firefox-synced-from-chromium-arc-dia-helium"]
+    ) == [("firefox", "aw-watcher-web-firefox-synced-from-chromium-arc-dia-helium")]
+
+
+@pytest.mark.parametrize("browser", ["chromium", "arc", "dia", "helium"])
+def test_browser_bucket_alias_exact_mapping(browser):
+    bid = f"aw-watcher-web-{browser}_desk"
+    synced = f"aw-watcher-web-{browser}-synced-from-desk"
+    assert browsersWithBuckets([bid]) == [(browser, bid)]
+    assert browsersWithBuckets([synced, bid]) == [(browser, synced)]
+    assert browsersWithBuckets([bid, synced]) == [(browser, bid)]
+
+
+def test_browser_bucket_alias_cross_fork_precedence(datastore):
+    _insert(
+        datastore,
+        "aw-watcher-window_desk",
+        "currentwindow",
+        "desk",
+        [
+            (0, 5, {"app": "Chromium", "title": "generic"}),
+            (5, 10, {"app": "Arc", "title": "dedicated"}),
+        ],
+    )
+    _insert(
+        datastore,
+        "aw-watcher-afk_desk",
+        "afkstatus",
+        "desk",
+        [(0, 10, {"status": "not-afk"})],
+    )
+    bids = ["aw-watcher-web-chrome_desk", "aw-watcher-web-arc_desk"]
+    for bid, url in zip(
+        bids, ["https://generic.test/page", "https://dedicated.test/page"]
+    ):
+        _insert(
+            datastore,
+            bid,
+            "web.tab.current",
+            "desk",
+            [(0, 10, {"url": url, "title": "page"})],
+        )
+    params = DesktopQueryParams(
+        bid_window="aw-watcher-window_desk",
+        bid_afk="aw-watcher-afk_desk",
+        bid_browsers=bids,
+        classes=CLASSES,
+    )
+    result = query2.query(
+        "test", fullDesktopQuery(params), _t(-60), _t(24 * 60), datastore
+    )
+    assert result["browser"]["duration"] == timedelta(seconds=600)
+    assert {
+        event["data"]["url"]: event["duration"].total_seconds()
+        for event in result["browser"]["urls"]
+    } == {"https://generic.test/page": 300, "https://dedicated.test/page": 300}
