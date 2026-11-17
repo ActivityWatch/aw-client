@@ -22,7 +22,9 @@ def redact():
 
 
 class LocalClient:
-    def __init__(self):
+    def __init__(self, fail_insert=False, fail_delete=False):
+        self.fail_insert = fail_insert
+        self.fail_delete = fail_delete
         self.events = [
             Event(
                 id=7,
@@ -40,26 +42,61 @@ class LocalClient:
         return deepcopy(self.events)
 
     def delete_event(self, bucket_id, event_id):
+        if self.fail_delete:
+            raise OSError("injected delete failure")
         self.writes.append("delete")
         self.events = [e for e in self.events if e.id != event_id]
 
     def insert_event(self, bucket_id, event):
+        if self.fail_insert:
+            raise OSError("injected insert failure")
         self.writes.append("insert")
-        raise OSError("injected insert failure")
+        assert event.id is None, "redacted copy must be inserted with a fresh ID"
+        self.events.append(event)
 
 
-def test_wet_failure_preserves_original(redact, monkeypatch):
-    client = LocalClient()
-    before = deepcopy(client.events)
+def _run_wet(redact, monkeypatch, client):
     monkeypatch.setattr(redact, "aw", client, raising=False)
     monkeypatch.setattr(redact, "DRYRUN", False)
     monkeypatch.setattr("builtins.input", lambda _: "y")
+    redact._redact_bucket("test", "secret")
 
-    with pytest.raises(RuntimeError, match="No events were modified"):
-        redact._redact_bucket("test", "secret")
+
+def test_wet_inserts_redacted_copy_then_deletes_original(redact, monkeypatch):
+    client = LocalClient()
+    original = deepcopy(client.events[0])
+
+    _run_wet(redact, monkeypatch, client)
+
+    assert client.writes == ["insert", "delete"]
+    assert len(client.events) == 1
+    (remaining,) = client.events
+    assert remaining.data == {"title": redact.REDACTED, "url": "public"}
+    assert (remaining.timestamp, remaining.duration) == (
+        original.timestamp,
+        original.duration,
+    )
+
+
+def test_wet_insert_failure_preserves_original(redact, monkeypatch):
+    client = LocalClient(fail_insert=True)
+    before = deepcopy(client.events)
+
+    with pytest.raises(OSError, match="injected insert failure"):
+        _run_wet(redact, monkeypatch, client)
 
     assert client.events == before
     assert client.writes == []
+
+
+def test_wet_delete_failure_keeps_both_and_reports(redact, monkeypatch, capsys):
+    client = LocalClient(fail_delete=True)
+
+    with pytest.raises(OSError, match="injected delete failure"):
+        _run_wet(redact, monkeypatch, client)
+
+    assert [e.data["title"] for e in client.events] == ["secret", redact.REDACTED]
+    assert "delete it manually" in capsys.readouterr().out
 
 
 def test_regex_input_preserves_nondigit_class(redact, monkeypatch):

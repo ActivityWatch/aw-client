@@ -1,10 +1,14 @@
 """
-Interactive preview of sensitive-data redaction.
+Interactive script to redact sensitive data.
 
-Wet writes are refused: the client/server APIs have no common atomic event
-replacement operation. Delete-then-insert can lose history on failure, while
-inserting with an existing ID has backend-dependent behavior. Export/back up
-history before using a tool with a verified replacement contract.
+Back up/export your history before running with --wet; deletes cannot be undone.
+
+Wet runs replace each matching event by inserting the redacted copy first
+(with no ID, so the server assigns a new one) and only then deleting the
+original. If the insert fails the original is left untouched; if the delete
+fails after a successful insert the original remains next to its redacted copy
+and the script stops, so no history is lost either way, but you must delete
+the leftover original yourself.
 
 The preview prints raw before-values, including sensitive data. Terminal output
 and captured logs are NOT sanitized.
@@ -19,6 +23,7 @@ import re
 import sys
 from copy import deepcopy
 from typing import (
+    cast,
     List,
     Pattern,
     Set,
@@ -67,11 +72,11 @@ def main():
     print("")
     if DRYRUN:
         print(
-            "NOTE: Performing a dry run, no events will be modified. Wet writes are unsupported."
+            "NOTE: Performing a dry run, no events will be modified. Run with --wet to modify events."
         )
     else:
         print(
-            "WARNING: Wet writes are unsupported without atomic event replacement. Matching events can be previewed, but no events will be modified."
+            "WARNING: Note that this performs an operation that cannot be undone. We strongly recommend that you backup/export your data before proceeding."
         )
     print(
         "WARNING: Preview prints raw sensitive values; captured logs are not sanitized."
@@ -112,10 +117,23 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
                 if DRYRUN:
                     print("DRYRUN, preview only; no events modified")
                 else:
-                    raise RuntimeError(
-                        "Wet redaction is unsupported: no common atomic event "
-                        "replacement API. No events were modified."
-                    )
+                    _replace_event(bucket_id, e_before, e)
+                    print("Redacted event")
+
+
+def _replace_event(bucket_id: str, original: Event, redacted: Event) -> None:
+    """Insert the redacted copy, then delete the original (never the reverse)."""
+    redacted = deepcopy(redacted)
+    redacted.id = None  # fresh ID: re-inserting an existing ID is backend-dependent
+    aw.insert_event(bucket_id, redacted)  # on failure the original is untouched
+    try:
+        aw.delete_event(bucket_id, cast(int, original.id))
+    except Exception:
+        print(
+            f"ERROR: inserted the redacted copy but could not delete original "
+            f"event {original.id} in {bucket_id}; delete it manually."
+        )
+        raise
 
 
 def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
