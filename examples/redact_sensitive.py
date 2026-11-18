@@ -1,22 +1,33 @@
 """
 Interactive script to redact sensitive data.
-Be careful to not delete stuff you want to keep!
+
+Back up/export your history before running with --wet; deletes cannot be undone.
+
+Wet runs replace each matching event by inserting the redacted copy first
+(with no ID, so the server assigns a new one) and only then deleting the
+original. If the insert fails the original is left untouched; if the delete
+fails after a successful insert the original remains next to its redacted copy
+and the script stops, so no history is lost either way, but you must delete
+the leftover original yourself.
+
+The preview prints raw before-values, including sensitive data. Terminal output
+and captured logs are NOT sanitized.
 
 Issues/improvements:
  - If an event matches the sensitive string, only the sensitive field will be redacted (so if the title matches but not the URL, the URL will remain unredacted)
  - One might not want to redact to the non-informative 'REDACTED', but instead to a string with secret meaning.
- - No preview of the events/strings to be redacted.
+
 """
 
 import re
 import sys
 from copy import deepcopy
 from typing import (
+    cast,
     List,
     Pattern,
     Set,
     Union,
-    cast,
 )
 
 from aw_client import ActivityWatchClient
@@ -30,8 +41,7 @@ DRYRUN = True
 
 def main():
     global DRYRUN
-    if "--wet" in sys.argv:
-        DRYRUN = False
+    DRYRUN = "--wet" not in sys.argv
 
     global aw
     aw = ActivityWatchClient(testing=True)
@@ -56,7 +66,7 @@ def main():
         pattern = input("Enter a string indicating sensitive content: ").lower()
     else:
         pattern = re.compile(
-            input("Enter a regex indicating sensitive content: ").lower()
+            input("Enter a regex indicating sensitive content: "), re.IGNORECASE
         )
 
     print("")
@@ -68,6 +78,9 @@ def main():
         print(
             "WARNING: Note that this performs an operation that cannot be undone. We strongly recommend that you backup/export your data before proceeding."
         )
+    print(
+        "WARNING: Preview prints raw sensitive values; captured logs are not sanitized."
+    )
     input("Press ENTER to continue, or Ctrl-C to abort")
 
     if bid_to_redact == "*":
@@ -102,11 +115,25 @@ def _redact_bucket(bucket_id: str, pattern: Union[str, Pattern]):
                 print(f"Data after:  {e.data}")
 
                 if DRYRUN:
-                    print("DRYRUN, would do: aw.insert_event(bucket_id, e)")
+                    print("DRYRUN, preview only; no events modified")
                 else:
-                    aw.delete_event(bucket_id, cast(int, e_before.id))
-                    aw.insert_event(bucket_id, e)
+                    _replace_event(bucket_id, e_before, e)
                     print("Redacted event")
+
+
+def _replace_event(bucket_id: str, original: Event, redacted: Event) -> None:
+    """Insert the redacted copy, then delete the original (never the reverse)."""
+    redacted = deepcopy(redacted)
+    redacted.id = None  # fresh ID: re-inserting an existing ID is backend-dependent
+    aw.insert_event(bucket_id, redacted)  # on failure the original is untouched
+    try:
+        aw.delete_event(bucket_id, cast(int, original.id))
+    except Exception:
+        print(
+            f"ERROR: inserted the redacted copy but could not delete original "
+            f"event {original.id} in {bucket_id}; delete it manually."
+        )
+        raise
 
 
 def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
@@ -116,7 +143,7 @@ def _check_event(e: Event, pattern: Union[str, Pattern]) -> bool:
                 if pattern in v.lower():
                     return True
             else:
-                if pattern.findall(v.lower()):
+                if pattern.search(v):
                     return True
     return False
 
@@ -129,7 +156,7 @@ def _redact_event(e: Event, pattern: Union[str, Pattern]) -> Event:
                 if pattern in v.lower():
                     e.data[k] = REDACTED
             else:
-                if pattern.findall(v.lower()):
+                if pattern.search(v):
                     e.data[k] = REDACTED
     return e
 
