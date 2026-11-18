@@ -570,8 +570,10 @@ def test_full_desktop_repeated_query_execution(
         assert asdict(params) == before
 
 
+# pytest-flask is installed in the release build's shared environment and reserves
+# the fixture name "app" for a Flask application, including parametrized values.
 @pytest.mark.parametrize(
-    "browser,app",
+    "browser,app_name",
     [
         ("chromium", "Chromium"),
         ("chromium", "chromium.exe"),
@@ -592,7 +594,7 @@ def test_full_desktop_repeated_query_execution(
     ],
 )
 @pytest.mark.parametrize("synced", [False, True])
-def test_browser_bucket_alias_duration(datastore, browser, app, synced):
+def test_browser_bucket_alias_duration(datastore, browser, app_name, synced):
     suffix = "-synced-from-desk" if synced else "_desk"
     bid = f"aw-watcher-web-{browser}{suffix}"
     _insert(
@@ -600,7 +602,7 @@ def test_browser_bucket_alias_duration(datastore, browser, app, synced):
         "aw-watcher-window_desk",
         "currentwindow",
         "desk",
-        [(0, 5, {"app": app, "title": "page"})],
+        [(0, 5, {"app": app_name, "title": "page"})],
     )
     _insert(
         datastore,
@@ -633,7 +635,7 @@ def test_browser_bucket_alias_duration(datastore, browser, app, synced):
 
 
 @pytest.mark.parametrize(
-    "browser,app",
+    "browser,app_name",
     [
         ("chromium", "Chromium"),
         ("arc", "Arc"),
@@ -646,7 +648,7 @@ def test_browser_bucket_alias_duration(datastore, browser, app, synced):
 @pytest.mark.parametrize("dedicated", [False, True])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_browser_bucket_alias_chrome_fallback_and_precedence(
-    datastore, browser, app, dedicated, reverse
+    datastore, browser, app_name, dedicated, reverse
 ):
     _insert(
         datastore,
@@ -654,7 +656,7 @@ def test_browser_bucket_alias_chrome_fallback_and_precedence(
         "currentwindow",
         "desk",
         [
-            (0, 5, {"app": app, "title": "fork"}),
+            (0, 5, {"app": app_name, "title": "fork"}),
             (5, 10, {"app": "Google Chrome", "title": "chrome"}),
         ],
     )
