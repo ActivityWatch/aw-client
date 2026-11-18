@@ -146,7 +146,7 @@ def query(
         if stop.tzinfo is None:
             stop = stop.replace(tzinfo=zone_info)
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
     if _json:
         print(json.dumps(result))
     else:
@@ -219,7 +219,7 @@ def report(
     query = queries.fullDesktopQuery(params)
     logger.debug("Query: \n" + queries.pretty_query(query))
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
@@ -304,7 +304,7 @@ def canonical(
     query = f"""{query}\n RETURN = events;"""
     logger.debug("Query: \n" + queries.pretty_query(query))
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
