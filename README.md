@@ -31,6 +31,20 @@ To install from a cloned version:
 
 ## Usage
 
+### Graceful shutdown of queued heartbeats
+
+Stop heartbeat-producing threads before calling `disconnect()`.
+`disconnect()` (also called when leaving `with client:`) persists the final
+premerged heartbeat interval before stopping the queue worker. It preserves
+only activity already observed; it does not extend an interval to shutdown
+time or wait for the server to receive the queue. Abrupt termination such as
+SIGKILL or power loss can still lose heartbeat state held only in memory.
+
+If storage rejects a pending heartbeat, `disconnect()` stops the worker but
+raises `OSError` rather than claiming persistence. Unwritten intervals remain
+in that client object for retry: recover storage and call `disconnect()` again
+before exiting. Successfully queued intervals are not queued a second time.
+
 For the CLI:
 
 ```
