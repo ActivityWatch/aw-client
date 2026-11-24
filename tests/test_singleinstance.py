@@ -324,6 +324,60 @@ del owner
             text=True,
             timeout=5,
         )
+        assert result.returncode == 0, result.stderr
     except subprocess.TimeoutExpired:
         pytest.fail("garbage collection during lockfile open deadlocked")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
+def test_nested_startup_during_open_is_rejected(tmp_path):
+    script = """
+import sys
+from aw_client import singleinstance
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+real_open = open
+entered = False
+nested = None
+
+def reentrant_open(*args, **kwargs):
+    global entered, nested
+    if not entered:
+        entered = True
+        try:
+            nested = singleinstance.SingleInstance("subprocess-lock")
+        except RuntimeError:
+            pass
+    return real_open(*args, **kwargs)
+
+singleinstance.open = reentrant_open
+owner = singleinstance.SingleInstance("subprocess-lock")
+assert nested is None, "nested startup opened a second lock descriptor"
+del owner
+# The in-progress marker must have been removed for a later normal startup.
+owner = singleinstance.SingleInstance("subprocess-lock")
+del owner
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
+def test_open_failure_does_not_leave_acquisition_pending(tmp_path, monkeypatch):
+    monkeypatch.setattr(singleinstance, "get_cache_dir", lambda name: str(tmp_path))
+
+    def failed_open(*args, **kwargs):
+        raise OSError("cannot open lockfile")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(singleinstance, "open", failed_open, raising=False)
+        with pytest.raises(OSError, match="cannot open lockfile"):
+            singleinstance.SingleInstance("subprocess-lock")
+    owner = singleinstance.SingleInstance("subprocess-lock")
+    assert _contender(tmp_path).returncode != 0
+    del owner
+    assert _contender(tmp_path).returncode == 0
