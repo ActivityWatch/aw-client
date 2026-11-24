@@ -25,6 +25,9 @@ class MockClient:
     def __init__(self):
         self.testing = True
         self.create_bucket_calls = []
+        # The real client owns the bucket registrations and their lock.
+        self._registered_buckets = []
+        self._buckets_lock = threading.Lock()
 
     def get_buckets(self, *args, **kwargs):
         print("Called get_buckets")

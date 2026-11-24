@@ -187,6 +187,12 @@ class ActivityWatchClient:
 
         self.commit_interval = client_config["commit_interval"]
 
+        # Buckets to (re)create whenever the queue connects. The client owns
+        # them, not the queue, so replacing the worker in disconnect() cannot
+        # lose a registration or undo a delete that is in flight. The lock
+        # serializes reconnect bucket creation with delete_bucket().
+        self._registered_buckets = []  # type: List[Bucket]
+        self._buckets_lock = threading.Lock()
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
@@ -444,9 +450,9 @@ class ActivityWatchClient:
             self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str, force: bool = False):
-        # Hold the queue's bucket lock so a reconnect cannot recreate the
-        # bucket between the DELETE and forgetting its registration.
-        with self.request_queue.buckets_lock:
+        # Hold the bucket lock so a reconnect cannot recreate the bucket
+        # between the DELETE and forgetting its registration.
+        with self._buckets_lock:
             try:
                 self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
             except req.HTTPError as e:
@@ -549,9 +555,6 @@ class ActivityWatchClient:
         self.request_queue = RequestQueue(
             self, persistqueue_path=old_queue.persistqueue_path
         )
-        # Keep the buckets to create on (re)connect, or queued heartbeats to a
-        # bucket the server doesn't have yet 404 and are dropped.
-        self.request_queue._registered_buckets = list(old_queue._registered_buckets)
         # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
         self._warned_queue_before_connect = False
 
@@ -635,11 +638,6 @@ class RequestQueue(threading.Thread):
         self.connected = False
         self._stop_event = threading.Event()
 
-        # Buckets that will have events queued to them, will be created if they don't exist
-        self._registered_buckets = []  # type: List[Bucket]
-        # Serializes reconnect bucket creation with delete_bucket().
-        self.buckets_lock = threading.Lock()
-
         self._attempt_reconnect_interval = 10
 
         if persistqueue_path is None:
@@ -682,14 +680,31 @@ class RequestQueue(threading.Thread):
         self._current = None
         self._persistqueue.task_done()
 
-    def _create_buckets(self) -> None:
-        with self.buckets_lock:
+    @property
+    def _registered_buckets(self) -> List[Bucket]:
+        # Buckets that will have events queued to them, created if they don't
+        # exist. Kept on the client so they survive replacing this thread.
+        return self.client._registered_buckets
+
+    def _create_buckets(self) -> bool:
+        lock = self.client._buckets_lock
+        # delete_bucket() holds the lock for its whole request. Wait in short
+        # steps so stop() still ends this thread and disconnect()'s join()
+        # cannot hang behind a stalled DELETE.
+        while not lock.acquire(timeout=0.1):
+            if self.should_stop():
+                return False
+        try:
             for bucket in self._registered_buckets:
                 self.client.create_bucket(bucket.id, bucket.type)
+        finally:
+            lock.release()
+        return True
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
-            self._create_buckets()
+            if not self._create_buckets():
+                return False
             self.connected = True
             logger.info(
                 f"Connection to aw-server established by {self.client.client_name}"
@@ -831,7 +846,7 @@ class RequestQueue(threading.Thread):
 
     def unregister_bucket(self, bucket_id: str) -> None:
         # Only called after a successful delete, so reconnect won't recreate it.
-        self._registered_buckets = [
+        self._registered_buckets[:] = [
             bucket for bucket in self._registered_buckets if bucket.id != bucket_id
         ]
 

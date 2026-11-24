@@ -163,3 +163,63 @@ def test_delete_waits_for_reconnect_bucket_creation(client, monkeypatch):
         ("create", "buckets/deleted"),
         ("delete", "buckets/deleted"),
     ]
+
+
+def test_stalled_delete_does_not_block_disconnect(client, monkeypatch):
+    deleting = threading.Event()
+    release = threading.Event()
+
+    def delete(endpoint):
+        deleting.set()
+        assert release.wait(timeout=10)
+
+    monkeypatch.setattr(client, "_post", lambda endpoint, data: None)
+    monkeypatch.setattr(client, "_delete", delete)
+    client.create_bucket("deleted", "test", queued=True)
+
+    deleter = threading.Thread(target=client.delete_bucket, args=("deleted",))
+    deleter.start()
+    try:
+        assert deleting.wait(timeout=5)
+        # The worker's reconnect now waits for the bucket lock held by the
+        # stalled DELETE; stop() must still end it.
+        client.connect()
+        disconnect = threading.Thread(target=client.disconnect)
+        disconnect.start()
+        disconnect.join(timeout=3)
+        assert not disconnect.is_alive()
+    finally:
+        release.set()
+        deleter.join(timeout=5)
+    assert not deleter.is_alive()
+
+
+def test_delete_in_flight_is_not_undone_by_queue_replacement(client, monkeypatch):
+    created = []
+    deleting = threading.Event()
+    release = threading.Event()
+
+    def delete(endpoint):
+        deleting.set()
+        assert release.wait(timeout=10)
+
+    monkeypatch.setattr(
+        client, "_post", lambda endpoint, data: created.append(endpoint)
+    )
+    monkeypatch.setattr(client, "_delete", delete)
+    client.create_bucket("deleted", "test", queued=True)
+    client.create_bucket("retained", "test", queued=True)
+
+    deleter = threading.Thread(target=client.delete_bucket, args=("deleted",))
+    deleter.start()
+    try:
+        assert deleting.wait(timeout=5)
+        # Replace the worker while the DELETE is still in flight.
+        replace_queue_while_offline(client, monkeypatch)
+    finally:
+        release.set()
+        deleter.join(timeout=5)
+    assert not deleter.is_alive()
+
+    assert client.request_queue._try_connect() is True
+    assert created == ["buckets/retained"]
