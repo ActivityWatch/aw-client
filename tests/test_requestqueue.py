@@ -290,3 +290,40 @@ def test_retry_delay_honors_retry_after():
     assert _retry_delay(resp("0")) == RETRY_DELAY_DEFAULT  # floored
     # HTTP-date form is not parsed, falls back to default
     assert _retry_delay(resp("Wed, 21 Oct 2026 07:28:00 GMT")) == RETRY_DELAY_DEFAULT
+
+
+def test_transient_ack_error_does_not_kill_queue_thread():
+    """aw-client#172: a transient SQLite error in task_done() ended the thread."""
+    import sqlite3
+
+    posted = []
+
+    class RecordingClient(MockClient):
+        def _post(self, endpoint, data):
+            posted.append(data)
+            return requests.Response()
+
+    rq = RequestQueue(RecordingClient())  # type: ignore
+    rq._try_connect = lambda: True  # type: ignore
+    rq.connected = True
+
+    real_task_done = rq._persistqueue.task_done
+    failures = [sqlite3.OperationalError("disk I/O error")]
+
+    def flaky_task_done():
+        if failures:
+            raise failures.pop()
+        return real_task_done()
+
+    rq._persistqueue.task_done = flaky_task_done  # type: ignore
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq.start()
+    try:
+        sleep(0.5)
+        rq.add_request("/api/0/buckets/test/heartbeat", {"n": 2})
+        assert rq.wait_for_queue_empty(timeout=5)
+        assert rq.is_alive()
+        assert {"n": 2} in posted
+    finally:
+        rq.stop()
+        rq.join()
