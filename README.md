@@ -94,6 +94,21 @@ Local API-key discovery and proxy bypass use the configured URL's actual host
 and port, not the default loopback address. Remote URLs do not receive a key
 read from the local server configuration.
 
+## Desktop-query browser buckets
+
+`fullDesktopQuery` recognizes dedicated `aw-watcher-web-chromium`, `-arc`,
+`-dia` and `-helium` watcher IDs as well as the existing browser types, with
+normal hostname or `-synced-from-<host>` suffixes. Matching is exact on the
+watcher part, so a browser name in the hostname does not select that browser.
+
+Chromium, Arc, Dia, Helium and Brave can also use the generic Chrome extension
+bucket. For each fork, a dedicated bucket explicitly supplied in `bid_browsers`
+takes precedence over the Chrome bucket, regardless of list order. This is
+bucket-presence precedence, not gap filling: if the dedicated bucket has no
+events for an interval, the generic bucket is not used for that fork during
+that interval. As before, the first supplied bucket for each browser is used;
+callers must select the appropriate host's buckets.
+
 ## Debugging
 
 * Run python with `LOG_LEVEL=debug` to get additional debugging output
@@ -109,3 +124,5 @@ The [`examples/`](examples/) directory contains a couple of example scripts, inc
  - [`load_dataframe.py`](https://github.com/ActivityWatch/aw-client/blob/master/examples/load_dataframe.py) - loads events from a host using a categorizing & AFK-filtering query, put result in a pandas dataframe, and export as CSV.
  - [`merge_buckets.py`](examples/merge_buckets.py) - merges two buckets with non-intersecting events by moving all events from one into the other.
  - [`redact_sensitive.py`](examples/redact_sensitive.py) - redact sensitive events.
+
+`load_dataframe.py` also handles empty query results, exporting a header-only CSV when requested.

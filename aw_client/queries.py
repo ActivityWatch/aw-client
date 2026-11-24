@@ -128,10 +128,13 @@ def canonicalEvents(
         params.classes = get_classes()
 
     # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
-    classes_str = json.dumps(params.classes, cls=EnhancedJSONEncoder)
+    # AQL accepts literal Unicode but does not decode JSON's \uXXXX escapes.
+    classes_str = json.dumps(
+        params.classes, cls=EnhancedJSONEncoder, ensure_ascii=False
+    )
     classes_str = re.sub(r"\\\\", r"\\", classes_str)
 
-    cat_filter_str = json.dumps(params.filter_classes)
+    cat_filter_str = json.dumps(params.filter_classes, ensure_ascii=False)
 
     # For simplicity, we assume that bid_window and bid_android are exchangeable (note however it needs special treatment)
     bid_window = (
@@ -444,7 +447,7 @@ def _browser_in_buckets(browser: str, browserbuckets: List[str]) -> Optional[str
         # Match only the watcher part of the ID (e.g. "aw-watcher-web-firefox"),
         # not the hostname suffix, which may itself contain a browser name.
         watcher = _base_bucket_id(bucket).split("_", 1)[0]
-        if browser in watcher:
+        if watcher == f"aw-watcher-web-{browser}":
             return bucket
     return None
 
@@ -464,8 +467,18 @@ def browserEvents(params: DesktopQueryParams) -> str:
     """Returns a list of active browser events (where the browser was the active window) from all browser buckets"""
     code = "browser_events = [];"
 
-    for browserName, bucketId in browsersWithBuckets(params.bid_browsers):
-        browser_appnames_str = json.dumps(browser_appnames[browserName])
+    browsers = browsersWithBuckets(params.bid_browsers)
+    dedicated = {browser for browser, _ in browsers}
+    for browserName, bucketId in browsers:
+        appnames = list(browser_appnames[browserName])
+        if browserName == "chrome":
+            # Chromium forks can use the Chrome extension's generic bucket.
+            # Prefer an explicitly supplied dedicated stream for that app so
+            # overlapping generic/dedicated events are not counted twice.
+            for fork in ("chromium", "arc", "dia", "helium", "brave"):
+                if fork not in dedicated:
+                    appnames.extend(browser_appnames[fork])
+        browser_appnames_str = json.dumps(appnames)
         code += f"""
           events_{browserName} = flood(query_bucket("{bucketId}"));
           window_{browserName} = filter_keyvals(events, "app", {browser_appnames_str});
@@ -484,17 +497,19 @@ browser_appnames = {
         "Google-chrome",
         "chrome.exe",
         "google-chrome-stable",
-        # Chromium
+        # Pre-releases
+        "Google-chrome-beta",
+        "Google-chrome-unstable",
+    ],
+    "chromium": [
         "Chromium",
         "Chromium-browser",
         "Chromium-browser-chromium",
         "chromium.exe",
-        # Pre-releases
-        "Google-chrome-beta",
-        "Google-chrome-unstable",
-        # Brave (should this be merged with the brave entry?)
-        "Brave-browser",
     ],
+    "arc": ["Arc", "Arc.exe", "arc", "arc.exe"],
+    "dia": ["Dia", "Dia.exe", "dia", "dia.exe"],
+    "helium": ["Helium", "helium", "helium.exe", "net.imput.helium"],
     "firefox": [
         "Firefox",
         "Firefox.exe",
@@ -508,7 +523,7 @@ browser_appnames = {
         "org.mozilla.firefox",
     ],
     "opera": ["opera.exe", "Opera"],
-    "brave": ["brave.exe"],
+    "brave": ["brave.exe", "Brave-browser"],
     "edge": [
         "msedge.exe",  # Windows
         "Microsoft Edge",  # macOS
@@ -530,10 +545,13 @@ def escape_doublequote(s: str) -> str:
 def fullDesktopQuery(
     params: DesktopQueryParams,
 ) -> str:
-    # Escape `"`
-    params.bid_window = escape_doublequote(params.bid_window)
-    params.bid_afk = escape_doublequote(params.bid_afk)
-    params.bid_browsers = [escape_doublequote(bucket) for bucket in params.bid_browsers]
+    # Escape `"` on a private copy; canonicalEvents may also fill default classes.
+    params = dataclasses.replace(
+        params,
+        bid_window=escape_doublequote(params.bid_window),
+        bid_afk=escape_doublequote(params.bid_afk),
+        bid_browsers=[escape_doublequote(bucket) for bucket in params.bid_browsers],
+    )
 
     # Build the base query
     query = f"""

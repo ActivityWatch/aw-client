@@ -6,11 +6,25 @@ import aw_client
 if __name__ == "__main__":
     bucket_id = f"aw-watcher-afk_{socket.gethostname()}"
 
-    daystart = datetime.combine(datetime.now().date(), time()).astimezone(timezone.utc)
-    dayend = daystart + timedelta(days=1)
+    now = datetime.now(timezone.utc)
+    today = now.astimezone().date()
+    daystart = datetime.combine(today, time()).astimezone(timezone.utc)
+    # Convert each local midnight separately: DST days can last 23 or 25 hours.
+    dayend = datetime.combine(today + timedelta(days=1), time()).astimezone(
+        timezone.utc
+    )
 
     awc = aw_client.ActivityWatchClient("testclient")
     events = awc.get_events(bucket_id, start=daystart, end=dayend)
     events = [e for e in events if e.data["status"] == "not-afk"]
-    total_duration = sum((e.duration for e in events), timedelta())
+    total_duration = sum(
+        (
+            max(
+                timedelta(),
+                min(e.timestamp + e.duration, now) - max(e.timestamp, daystart),
+            )
+            for e in events
+        ),
+        timedelta(),
+    )
     print(f"Total time spent on computer today: {total_duration}")

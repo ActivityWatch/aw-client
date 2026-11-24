@@ -1,7 +1,41 @@
 from datetime import timedelta
+from typing import List, Sequence
 
 import aw_client
+from aw_core.models import Event
 from aw_transform.filter_period_intersect import _intersecting_eventpairs
+
+
+def copy_events_without_ids(events: Sequence[Event]) -> List[Event]:
+    """Return insertable copies that do not carry source IDs.
+
+    Caller objects and their data dicts are left unchanged. Python backends
+    treat a set ID as replace/upsert, which is how hostname-change merges lose
+    or overwrite destination history.
+    """
+    copies: List[Event] = []
+    for event in events:
+        copies.append(
+            Event(
+                timestamp=event.timestamp,
+                duration=event.duration,
+                data=dict(event.data),
+            )
+        )
+    return copies
+
+
+def destination_contains(actual: Sequence[Event], expected: Sequence[Event]) -> bool:
+    """True when every expected event's content appears in actual (IDs ignored)."""
+    remaining = list(actual)
+    for want in expected:
+        for index, have in enumerate(remaining):
+            if have == want:
+                remaining.pop(index)
+                break
+        else:
+            return False
+    return True
 
 
 def main():
@@ -52,8 +86,25 @@ def main():
         print("Aborting")
         exit(1)
 
+    original_dest = list(dest_events)
+    copies = copy_events_without_ids(src_events)
     print("Inserting source events into destination bucket...")
-    aw.insert_events(dest_id, src_events)
+    try:
+        # Python bulk insert returns None on success; that is not a failure.
+        aw.insert_events(dest_id, copies)
+    except Exception as exc:
+        print(f"Insertion failed ({exc}); source bucket retained")
+        print("Exiting")
+        return
+
+    after = aw.get_events(dest_id)
+    if not destination_contains(after, list(original_dest) + list(src_events)):
+        print(
+            "Destination does not contain original events plus copied source "
+            "events; source bucket retained"
+        )
+        print("Exiting")
+        return
 
     print("Operation complete")
     if input("Do you want to delete the source bucket? (y/n): ") == "y":

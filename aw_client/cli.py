@@ -15,7 +15,7 @@ from tabulate import tabulate
 import aw_client
 
 from . import queries
-from .classes import default_classes, get_classes
+from .classes import get_classes
 
 now = datetime.now(timezone.utc)
 td1day = timedelta(days=1)
@@ -142,22 +142,35 @@ def query(
 
     if timezone:
         zone_info = ZoneInfo(timezone)
-        start = start.replace(tzinfo=zone_info)
-        stop = stop.replace(tzinfo=zone_info)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=zone_info)
+        if stop.tzinfo is None:
+            stop = stop.replace(tzinfo=zone_info)
     if not start.tzinfo:
         start = start.astimezone()
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
     if _json:
         print(json.dumps(result))
     else:
         for period in result:
+            # AQL can return any JSON value, not only lists of events.
+            if not (
+                isinstance(period, list)
+                and all(
+                    isinstance(event, dict)
+                    and type(event.get("duration")) in (int, float)
+                    and isinstance(event.get("data"), dict)
+                    for event in period
+                )
+            ):
+                print(json.dumps(period))
+                continue
+
             print(f"Showing 10 out of {len(period)} events:")
             for event in period[:10]:
-                event.pop("id")
-                event.pop("timestamp")
                 print(
                     " - Duration: {} \tData: {}".format(
                         str(timedelta(seconds=event["duration"])).split(".")[0],
@@ -172,6 +185,7 @@ def query(
 
 @main.command(help="Generate an activity report")
 @click.argument("hostname")
+@click.option("--name", help="Query name (required with --cache)")
 @click.option("--cache", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
@@ -197,7 +211,7 @@ def report(
 
     bid_browsers: List[str] = []
 
-    classes = get_classes()
+    classes = get_classes(obj.client)
     params = queries.DesktopQueryParams(
         bid_browsers=bid_browsers,
         classes=classes,
@@ -210,7 +224,7 @@ def report(
     query = queries.fullDesktopQuery(params)
     logger.debug("Query: \n" + queries.pretty_query(query))
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:
@@ -228,10 +242,9 @@ def report(
         title_events = _parse_events(period["window"]["title_events"])
         print_top(title_events, lambda e: e.data["title"], title="Titles", n=limit)
 
-        active_events = _parse_events(period["window"]["title_events"])
         print(
             "Total duration:\t",
-            sum((e.duration for e in active_events), timedelta()),
+            timedelta(seconds=period["window"]["duration"]),
         )
 
 
@@ -255,6 +268,7 @@ def print_top(events: List[Event], key=lambda e: e.data, title="Events", n=10):
 
 @main.command(help="Query 'canonical events' for a single host (filtered, classified)")
 @click.argument("hostname")
+@click.option("--name", help="Query name (required with --cache)")
 @click.option("--cache", is_flag=True)
 @click.option("--start", default=now - td1day, type=click.DateTime())
 @click.option("--stop", default=now + td1yr, type=click.DateTime())
@@ -283,7 +297,7 @@ def canonical(
     if not stop.tzinfo:
         stop = stop.astimezone()
 
-    classes = default_classes
+    classes = get_classes(obj.client)
 
     query = queries.canonicalEvents(
         queries.DesktopQueryParams(
@@ -295,7 +309,7 @@ def canonical(
     query = f"""{query}\n RETURN = events;"""
     logger.debug("Query: \n" + queries.pretty_query(query))
 
-    result = obj.client.query(query, [(start, stop)], cache=cache, name=name)
+    result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
 
     # TODO: Print titles, apps, categories, with most time
     for period in result:

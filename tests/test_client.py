@@ -229,7 +229,7 @@ def _client_with_server_starting_at(monkeypatch, start_at):
     client = ActivityWatchClient("aw-test-client", testing=True)
     attempts = []
 
-    def fake_get_info():
+    def fake_get_info(timeout=None):
         attempts.append(clock.now)
         if clock.now < start_at:
             raise RequestsConnectionError("server not up yet")
@@ -257,3 +257,67 @@ def test_wait_for_start_raises_at_timeout(monkeypatch):
     # Never sleeps past the deadline, and makes a final attempt right at it
     assert clock.now == pytest.approx(10)
     assert attempts[-1] == pytest.approx(10)
+
+
+def _http_error(status):
+    from requests import Response
+
+    response = Response()
+    response.status_code = status
+    return HTTPError(f"{status} error", response=response)
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_wait_for_start_retries_proxy_errors_while_backend_starts(monkeypatch, status):
+    """aw-client#172: a reverse proxy answers 502/503 until the backend is up."""
+    clock = FakeClock()
+    monkeypatch.setattr(client_module, "monotonic", clock.monotonic)
+    monkeypatch.setattr(client_module, "sleep", clock.sleep)
+    client = ActivityWatchClient("aw-test-client", testing=True)
+
+    def fake_get_info(timeout=None):
+        if clock.now < 5:
+            raise _http_error(status)
+        return {"hostname": "test-host"}
+
+    monkeypatch.setattr(client, "get_info", fake_get_info)
+    client.wait_for_start(timeout=10)
+    assert 5 <= clock.now < 6
+
+
+def test_wait_for_start_does_not_retry_client_errors(monkeypatch):
+    client = ActivityWatchClient("aw-test-client", testing=True)
+
+    attempts = 0
+
+    def fake_get_info(timeout=None):
+        nonlocal attempts
+        attempts += 1
+        raise _http_error(404)
+
+    monkeypatch.setattr(client, "get_info", fake_get_info)
+    with pytest.raises(HTTPError):
+        client.wait_for_start(timeout=10)
+    assert attempts == 1
+
+
+def test_wait_for_start_bounds_each_probe_by_the_time_left(monkeypatch):
+    """A slow proxy response must not hold wait_for_start past its timeout."""
+    from requests.exceptions import ReadTimeout
+
+    clock = FakeClock()
+    monkeypatch.setattr(client_module, "monotonic", clock.monotonic)
+    monkeypatch.setattr(client_module, "sleep", clock.sleep)
+    client = ActivityWatchClient("aw-test-client", testing=True)
+    timeouts = []
+
+    def fake_get_info(timeout=None):
+        timeouts.append(timeout)
+        assert timeout is not None and timeout <= 10 - clock.now + 1e-9
+        clock.now += timeout  # the request hangs until its own timeout
+        raise ReadTimeout("slow proxy")
+
+    monkeypatch.setattr(client, "get_info", fake_get_info)
+    with pytest.raises(Exception, match="did not start in time"):
+        client.wait_for_start(timeout=10)
+    assert clock.now <= 10.1 + 1e-9

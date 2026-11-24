@@ -20,7 +20,7 @@ Usage:
 
 import socket
 import sys
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Union
 
 import gspread
@@ -28,7 +28,6 @@ from gspread.utils import ValueInputOption
 
 import working_hours
 
-td1d = timedelta(days=1)
 break_time = 10 * 60
 
 
@@ -70,25 +69,15 @@ def update_sheet(sheet_key: str, regex: str):
     else:
         last_date = None
 
-    last_datetime = (
-        (datetime.combine(last_date, time()) + working_hours.day_offset).astimezone()
-        if last_date
-        else None
-    )
-
-    if last_datetime:
-        print(f"Last entry: {last_datetime}")
+    if last_date:
+        print(f"Last entry: {last_date}")
 
     now = datetime.now().astimezone()
-    today = (
-        datetime.combine(now.date(), time()) + working_hours.day_offset
-    ).astimezone()
 
     # Create a list of time periods to query, from last_date or days_back_on_new back if None
     days_back_on_new = 30
-    days_back = (today - last_datetime).days + 1 if last_datetime else days_back_on_new
-    timeperiods = [(today - i * td1d, today - (i - 1) * td1d) for i in range(days_back)]
-    timeperiods.reverse()
+    days_back = (now.date() - last_date).days + 1 if last_date else days_back_on_new
+    timeperiods = working_hours.workday_periods(now.date(), days_back)
 
     # Run the query function from the original script and get the result
     res = working_hours.query(regex, timeperiods, hostname)
