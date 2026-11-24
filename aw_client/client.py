@@ -445,6 +445,7 @@ class ActivityWatchClient:
 
     def delete_bucket(self, bucket_id: str, force: bool = False):
         self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
+        self.request_queue.unregister_bucket(bucket_id)
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
@@ -814,6 +815,12 @@ class RequestQueue(threading.Thread):
             logger.info("Queueing requests succeeded again")
             self._queue_write_failing = False
         return True
+
+    def unregister_bucket(self, bucket_id: str) -> None:
+        # Only called after a successful delete, so reconnect won't recreate it.
+        self._registered_buckets = [
+            bucket for bucket in self._registered_buckets if bucket.id != bucket_id
+        ]
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)
