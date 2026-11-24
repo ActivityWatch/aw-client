@@ -688,8 +688,9 @@ class RequestQueue(threading.Thread):
 
     def _task_done(self) -> None:
         # Delivery is finished: retry only the local ack, independently of the
-        # server's availability. Keep the request persisted if shutdown wins.
-        while not self.should_stop():
+        # server's availability. Always attempt the first ack after delivery;
+        # shutdown cancels retries and leaves a failed ack persisted.
+        while True:
             try:
                 self._persistqueue.task_done()
             except (OSError, sqlite3.OperationalError) as e:

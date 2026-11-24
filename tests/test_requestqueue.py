@@ -343,20 +343,29 @@ def test_transient_ack_error_does_not_kill_queue_thread(tmp_path):
 @pytest.mark.parametrize("error_type", [OSError, sqlite3.OperationalError])
 def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
     """Shutdown interrupts a sustained local ack failure and keeps the request."""
-    ack_failed = threading.Event()
+    retry_wait_entered = threading.Event()
     client = FlakyClient(None)
     rq = _fresh_queue(client, tmp_path)
     rq.connected = True
 
+    real_wait = rq.wait
+
+    def observed_wait(seconds):
+        assert seconds == 1
+        retry_wait_entered.set()
+        # A long deadline makes an uninterruptible retry fail decisively.
+        return real_wait(10)
+
+    rq.wait = observed_wait  # type: ignore[method-assign]
+
     def failing_task_done():
-        ack_failed.set()
         raise error_type("disk unavailable")
 
     rq._persistqueue.task_done = failing_task_done  # type: ignore
     rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
     rq.start()
     try:
-        assert ack_failed.wait(timeout=2)
+        assert retry_wait_entered.wait(timeout=2)
     finally:
         rq.stop()
         rq.join(timeout=2)
@@ -369,3 +378,19 @@ def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
     request = restarted._get_next()
     assert request is not None
     assert request.data == {"n": 1}
+
+
+def test_shutdown_during_successful_send_still_acknowledges(tmp_path):
+    class StoppingClient(MockClient):
+        def _post(self, endpoint, data):
+            rq.stop()
+            return requests.Response()
+
+    rq = _fresh_queue(StoppingClient(), tmp_path)
+    rq.connected = True
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq._dispatch_request()
+    assert rq.should_stop()
+    assert rq._current is None
+    restarted = _fresh_queue(MockClient(), tmp_path)
+    assert restarted._get_next() is None
