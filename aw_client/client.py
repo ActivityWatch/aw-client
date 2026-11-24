@@ -697,6 +697,10 @@ class RequestQueue(threading.Thread):
         try:
             for bucket in self._registered_buckets:
                 self.client.create_bucket(bucket.id, bucket.type)
+            # Publish success before releasing the lock: a waiting registration
+            # must either join this creation pass or see a connected queue and
+            # create its bucket itself.
+            self.connected = True
         finally:
             lock.release()
         return True
@@ -705,7 +709,6 @@ class RequestQueue(threading.Thread):
         try:  # Try to connect
             if not self._create_buckets():
                 return False
-            self.connected = True
             logger.info(
                 f"Connection to aw-server established by {self.client.client_name}"
             )

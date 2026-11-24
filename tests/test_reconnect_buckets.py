@@ -319,3 +319,41 @@ def test_connected_registration_and_delete_are_serialized(client, monkeypatch):
     operations.clear()
     assert client.request_queue._try_connect() is True
     assert operations == []
+
+
+def test_registration_at_reconnect_lock_release_is_created(client, monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        client, "_post", lambda endpoint, data: created.append(endpoint)
+    )
+    client.create_bucket("existing", "test", queued=True)
+    lock = client._buckets_lock
+
+    class RegisterOnRelease:
+        fired = False
+
+        def acquire(self, **kwargs):
+            return lock.acquire(**kwargs)
+
+        def release(self):
+            lock.release()
+            if not self.fired:
+                self.fired = True
+                # Schedule registration immediately after reconnect releases
+                # its lock, before _try_connect() can do anything else.
+                client.create_bucket("concurrent", "test", queued=True)
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.release()
+
+    monkeypatch.setattr(client, "_buckets_lock", RegisterOnRelease())
+    assert client.request_queue._try_connect() is True
+    assert created == ["buckets/existing", "buckets/concurrent"]
+    assert [bucket.id for bucket in client._registered_buckets] == [
+        "existing",
+        "concurrent",
+    ]
