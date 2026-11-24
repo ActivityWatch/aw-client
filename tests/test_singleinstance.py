@@ -149,3 +149,126 @@ def test_same_process_duplicate_keeps_owner_lock(tmp_path, monkeypatch):
     gc.collect()
     acquired = _contender(tmp_path)
     assert acquired.returncode == 0, acquired.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_forked_client_must_acquire_its_own_lock(tmp_path):
+    script = """
+import os
+import sys
+from aw_client import singleinstance
+
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+owner = singleinstance.SingleInstance("subprocess-lock")
+pid = os.fork()
+if pid == 0:
+    try:
+        duplicate = singleinstance.SingleInstance("subprocess-lock")
+    except SystemExit:
+        os._exit(0)
+    os._exit(1)
+_, status = os.waitpid(pid, 0)
+assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, "forked child bypassed the OS lock"
+del owner
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
+def test_concurrent_clients_keep_owner_lock(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    monkeypatch.setattr(singleinstance, "get_cache_dir", lambda name: str(tmp_path))
+    lock_entered = Event()
+    release_lock = Event()
+    second_open = Event()
+    real_lockf = singleinstance.fcntl.lockf
+    real_open = open
+
+    def delayed_lockf(fp, mode):
+        if not lock_entered.is_set():
+            lock_entered.set()
+            assert release_lock.wait(5)
+        return real_lockf(fp, mode)
+
+    def tracked_open(*args, **kwargs):
+        if lock_entered.is_set():
+            second_open.set()
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(singleinstance.fcntl, "lockf", delayed_lockf)
+    monkeypatch.setattr(singleinstance, "open", tracked_open, raising=False)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(singleinstance.SingleInstance, "subprocess-lock")
+        assert lock_entered.wait(5)
+        second = pool.submit(singleinstance.SingleInstance, "subprocess-lock")
+        try:
+            # The unfixed constructor opens a second descriptor while the first
+            # is acquiring its lock. A serialized constructor waits instead.
+            second_open.wait(0.2)
+        finally:
+            release_lock.set()
+        owner = first.result(timeout=5)
+        duplicate = second.result(timeout=5)
+    # Futures retain their return values, so drop them before testing collection.
+    del first, second, duplicate
+    denied = _contender(tmp_path)
+    assert denied.returncode != 0, denied.stdout
+    del owner
+    acquired = _contender(tmp_path)
+    assert acquired.returncode == 0, acquired.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_forked_client_reacquires_after_parent_release(tmp_path):
+    script = """
+import os
+import subprocess
+import sys
+from aw_client import singleinstance
+
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+owner = singleinstance.SingleInstance("subprocess-lock")
+read_fd, write_fd = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(write_fd)
+    os.read(read_fd, 1)
+    os.close(read_fd)
+    duplicate = singleinstance.SingleInstance("subprocess-lock")
+    # Collecting the inherited object must not close a descriptor of the file
+    # after this child has acquired its own process-owned lock.
+    del owner
+    contender = subprocess.run(
+        [sys.executable, "-c", sys.argv[2], sys.argv[1], "unused", "try"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if contender.returncode == 0:
+        os._exit(1)
+    del duplicate
+    contender = subprocess.run(
+        [sys.executable, "-c", sys.argv[2], sys.argv[1], "unused", "try"],
+        capture_output=True, text=True, timeout=5,
+    )
+    os._exit(0 if contender.returncode == 0 else 2)
+os.close(read_fd)
+del owner
+os.write(write_fd, b"x")
+os.close(write_fd)
+_, status = os.waitpid(pid, 0)
+assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), _CHILD],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
