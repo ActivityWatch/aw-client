@@ -180,8 +180,11 @@ del owner
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
 def test_concurrent_clients_keep_owner_lock(tmp_path, monkeypatch):
+    # Skip in the body rather than via skipif: mypy narrows on this check,
+    # keeping the POSIX-only fcntl references out of the Windows typecheck.
+    if sys.platform == "win32":
+        pytest.skip("POSIX lock semantics")
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
