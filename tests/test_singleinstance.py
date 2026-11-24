@@ -415,3 +415,40 @@ if child_pid == 0:
         timeout=5,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_fork_right_after_locking_child_must_win_its_own_lock(tmp_path):
+    script = """
+import os
+import sys
+from aw_client import singleinstance
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+real_lockf = singleinstance.fcntl.lockf
+child_pid = None
+
+def forking_lockf(fp, flags):
+    global child_pid
+    real_lockf(fp, flags)
+    if child_pid is None:
+        child_pid = os.fork()
+
+singleinstance.fcntl.lockf = forking_lockf
+try:
+    owner = singleinstance.SingleInstance("subprocess-lock")
+except SystemExit:
+    if child_pid == 0:
+        os._exit(42)  # the child was refused: the parent owns the lock
+    raise
+if child_pid == 0:
+    os._exit(0)  # the child started without owning the lock
+_, status = os.waitpid(child_pid, 0)
+assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 42, status
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr

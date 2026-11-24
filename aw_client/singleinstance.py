@@ -76,10 +76,15 @@ class SingleInstance:
                         f"Reentrant SingleInstance acquisition: {self.lockfile}"
                     )
                 _acquiring.add(self.lockfile)
+                pid = os.getpid()
                 try:
                     fp = open(self.lockfile, "w")
                     try:
                         fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        if os.getpid() != pid:
+                            # Forked after the lock was taken: it stayed with
+                            # the parent, so the child must win its own.
+                            fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except OSError:
                         fp.close()
                     else:
