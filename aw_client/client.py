@@ -444,8 +444,18 @@ class ActivityWatchClient:
             self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str, force: bool = False):
-        self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
-        self.request_queue.unregister_bucket(bucket_id)
+        # Hold the queue's bucket lock so a reconnect cannot recreate the
+        # bucket between the DELETE and forgetting its registration.
+        with self.request_queue.buckets_lock:
+            try:
+                self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
+            except req.HTTPError as e:
+                # 404: already gone, which is the state the caller asked for.
+                # Forget the registration so reconnect does not recreate it.
+                if e.response is not None and e.response.status_code == 404:
+                    self.request_queue.unregister_bucket(bucket_id)
+                raise
+            self.request_queue.unregister_bucket(bucket_id)
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
@@ -627,6 +637,8 @@ class RequestQueue(threading.Thread):
 
         # Buckets that will have events queued to them, will be created if they don't exist
         self._registered_buckets = []  # type: List[Bucket]
+        # Serializes reconnect bucket creation with delete_bucket().
+        self.buckets_lock = threading.Lock()
 
         self._attempt_reconnect_interval = 10
 
@@ -671,8 +683,9 @@ class RequestQueue(threading.Thread):
         self._persistqueue.task_done()
 
     def _create_buckets(self) -> None:
-        for bucket in self._registered_buckets:
-            self.client.create_bucket(bucket.id, bucket.type)
+        with self.buckets_lock:
+            for bucket in self._registered_buckets:
+                self.client.create_bucket(bucket.id, bucket.type)
 
     def _try_connect(self) -> bool:
         try:  # Try to connect

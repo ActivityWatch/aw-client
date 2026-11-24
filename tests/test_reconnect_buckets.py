@@ -101,3 +101,65 @@ def test_failed_delete_keeps_registration(client, monkeypatch):
     replace_queue_while_offline(client, monkeypatch)
     assert client.request_queue._try_connect() is True
     assert created == ["buckets/retained"]
+
+
+def test_delete_of_missing_bucket_forgets_registration(client, monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        client, "_post", lambda endpoint, data: created.append(endpoint)
+    )
+
+    def not_found(endpoint):
+        response = requests.Response()
+        response.status_code = 404
+        raise requests.HTTPError("404 Not Found", response=response)
+
+    monkeypatch.setattr(client, "_delete", not_found)
+    client.create_bucket("gone", "test", queued=True)
+    client.create_bucket("retained", "test", queued=True)
+    # The error still reaches the caller, but the bucket is already absent,
+    # so reconnect must not recreate it.
+    with pytest.raises(requests.HTTPError):
+        client.delete_bucket("gone")
+
+    assert client.request_queue._try_connect() is True
+    assert created == ["buckets/retained"]
+
+
+def test_delete_waits_for_reconnect_bucket_creation(client, monkeypatch):
+    log = []
+    creating = threading.Event()
+    release = threading.Event()
+
+    def post(endpoint, data):
+        log.append(("create", endpoint))
+        if endpoint == "buckets/retained":
+            creating.set()
+            assert release.wait(timeout=5)
+
+    monkeypatch.setattr(client, "_post", post)
+    monkeypatch.setattr(
+        client, "_delete", lambda endpoint: log.append(("delete", endpoint))
+    )
+    client.create_bucket("retained", "test", queued=True)
+    client.create_bucket("deleted", "test", queued=True)
+
+    reconnect = threading.Thread(target=client.request_queue._try_connect)
+    reconnect.start()
+    assert creating.wait(timeout=5)
+    delete = threading.Thread(target=client.delete_bucket, args=("deleted",))
+    delete.start()
+    # The DELETE must not run while reconnect is still creating buckets,
+    # or reconnect recreates the bucket right after it was deleted.
+    delete.join(timeout=0.3)
+    assert delete.is_alive()
+    release.set()
+    reconnect.join(timeout=5)
+    delete.join(timeout=5)
+    assert not reconnect.is_alive() and not delete.is_alive()
+
+    assert log == [
+        ("create", "buckets/retained"),
+        ("create", "buckets/deleted"),
+        ("delete", "buckets/deleted"),
+    ]
