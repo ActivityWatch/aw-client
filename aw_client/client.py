@@ -548,7 +548,13 @@ class ActivityWatchClient:
             try:
                 self.get_info()
                 return
-            except req.exceptions.ConnectionError:
+            except (req.exceptions.ConnectionError, req.exceptions.HTTPError) as e:
+                # A reverse proxy answers 502/503/504 until the backend is up;
+                # other HTTP errors will not fix themselves (aw-client#172).
+                if isinstance(e, req.exceptions.HTTPError):
+                    status = e.response.status_code if e.response is not None else None
+                    if status not in (502, 503, 504):
+                        raise
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise Exception(
