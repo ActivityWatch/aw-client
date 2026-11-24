@@ -73,6 +73,65 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _queue_destination(address: str) -> Tuple[str, str, int, str]:
+    """Canonical HTTP destination, without credentials or filename-unsafe text.
+
+    Do not resolve DNS or merge different loopback names: those can route to
+    different virtual hosts. Preserve path case and escaping for proxy routes.
+    """
+    destination = urlsplit(address)
+    host = (destination.hostname or "").lower()
+    try:
+        host = ipaddress.ip_address(host).compressed
+    except ValueError:
+        # A DNS hostname has no IP spelling to compress; keep its lowercase form.
+        pass
+    port = destination.port
+    if port is None:
+        port = 443 if destination.scheme == "https" else 80
+    return destination.scheme.lower(), host, port, destination.path.rstrip("/")
+
+
+def _default_owned_marker(legacy_path: str) -> str:
+    return legacy_path + ".default-owned"
+
+
+def _adopt_legacy_queue(legacy_path: str, destination_path: str) -> None:
+    """Hand an unbound pre-upgrade queue to the first non-default destination.
+
+    Before destination-bound queues every destination shared the legacy queue,
+    so a client pointed at a custom host/port/profile server had its backlog
+    there. Rename (atomic, no copy) it to that destination's queue once, so a
+    backlog is neither stranded nor replayed to two servers. The default local
+    destination keeps the legacy path itself and never reaches this.
+
+    Once the default destination has opened the legacy path it is that
+    destination's live queue, not a pre-upgrade backlog, and it is marked as
+    such: never adopt a marked queue, or its pending local heartbeats would
+    be sent to another server.
+    """
+    if (
+        not os.path.isdir(legacy_path)
+        or os.path.exists(destination_path)
+        or os.path.exists(_default_owned_marker(legacy_path))
+    ):
+        return
+    try:
+        os.rename(legacy_path, destination_path)
+    except OSError as e:
+        logger.warning(
+            "Could not adopt legacy queue %s for this server (%s); "
+            "pending heartbeats stay in the legacy queue",
+            legacy_path,
+            e,
+        )
+    else:
+        logger.info(
+            "Adopted legacy heartbeat queue %s for this server destination",
+            legacy_path,
+        )
+
+
 def _dt_is_tzaware(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
 
@@ -641,10 +700,43 @@ class RequestQueue(threading.Thread):
                 if profile is not None
                 else ("-testing" if client.testing else "")
             )
-            persistqueue_path = os.path.join(
-                queued_dir,
-                f"{self.client.client_name}{suffix}.v{self.VERSION}.persistqueue",
+            legacy_name = (
+                f"{self.client.client_name}{suffix}.v{self.VERSION}.persistqueue"
             )
+            legacy_path = os.path.join(queued_dir, legacy_name)
+            default_port = 5666 if client.testing else 5600
+            # Older custom queue clients lack server_address; preserve their
+            # local-only contract. ActivityWatchClient always supplies it.
+            address = getattr(
+                client, "server_address", f"http://127.0.0.1:{default_port}"
+            )
+            destination = _queue_destination(address)
+            if destination == ("http", "127.0.0.1", default_port, ""):
+                # The sole compatibility owner of an unbound legacy backlog.
+                # Keep its path (no move/open-file race with old clients).
+                persistqueue_path = legacy_path
+                # Mark it before opening it, so a later non-default client
+                # never adopts this live queue (see _adopt_legacy_queue).
+                try:
+                    with open(_default_owned_marker(legacy_path), "a"):
+                        pass
+                except OSError as e:
+                    logger.warning(
+                        "Could not mark legacy queue %s as owned by the default "
+                        "server (%s); a non-default client may adopt it",
+                        legacy_path,
+                        e,
+                    )
+            else:
+                destination_id = hashlib.sha256(
+                    json.dumps(destination).encode("utf-8")
+                ).hexdigest()
+                persistqueue_path = os.path.join(
+                    queued_dir,
+                    f"{self.client.client_name}{suffix}.v{self.VERSION}."
+                    f"destination-{destination_id}.persistqueue",
+                )
+                _adopt_legacy_queue(legacy_path, persistqueue_path)
 
         logger.debug(f"queue path '{persistqueue_path}'")
         self.persistqueue_path = persistqueue_path
