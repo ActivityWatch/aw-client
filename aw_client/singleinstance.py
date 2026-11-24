@@ -28,7 +28,6 @@ def _after_fork_child():
     for fp, _ in _held.values():
         fp.close()
     _held.clear()
-    _acquiring.clear()
     _held_lock.release()
 
 

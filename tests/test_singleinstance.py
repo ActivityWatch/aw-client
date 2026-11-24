@@ -381,3 +381,37 @@ def test_open_failure_does_not_leave_acquisition_pending(tmp_path, monkeypatch):
     assert _contender(tmp_path).returncode != 0
     del owner
     assert _contender(tmp_path).returncode == 0
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_fork_during_open_preserves_in_progress_constructor(tmp_path):
+    script = """
+import os
+import sys
+from aw_client import singleinstance
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+real_open = open
+child_pid = None
+
+def forking_open(*args, **kwargs):
+    global child_pid
+    if child_pid is None:
+        child_pid = os.fork()
+        if child_pid:
+            _, status = os.waitpid(child_pid, 0)
+            assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+    return real_open(*args, **kwargs)
+
+singleinstance.open = forking_open
+owner = singleinstance.SingleInstance("subprocess-lock")
+del owner
+if child_pid == 0:
+    os._exit(0)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
