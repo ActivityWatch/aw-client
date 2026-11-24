@@ -65,7 +65,7 @@ def test_commands_resolve_categories_on_selected_client(
     )
 
     assert result.exit_code == 0, (result.output, result.exception)
-    factory.assert_called_once_with(**expected)
+    factory.assert_called_once_with(**expected, request_timeout=10.0)
     selected.get_setting.assert_called_once_with("classes")
     other.get_setting.assert_not_called()
     query = selected.query.call_args.args[0]
