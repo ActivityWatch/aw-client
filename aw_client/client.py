@@ -534,9 +534,13 @@ class ActivityWatchClient:
         self.request_queue.join()
 
         # Throw away old thread object, create new one since same thread cannot be started twice
+        old_queue = self.request_queue
         self.request_queue = RequestQueue(
-            self, persistqueue_path=self.request_queue.persistqueue_path
+            self, persistqueue_path=old_queue.persistqueue_path
         )
+        # Keep the buckets to create on (re)connect, or queued heartbeats to a
+        # bucket the server doesn't have yet 404 and are dropped.
+        self.request_queue._registered_buckets = list(old_queue._registered_buckets)
         # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
         self._warned_queue_before_connect = False
 
