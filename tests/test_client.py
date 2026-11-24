@@ -332,5 +332,5 @@ def test_queued_heartbeat_commit_interval_zero_commits_every_merge():
             "b", _event(t, {"a": 1}), pulsetime=10, queued=True, commit_interval=0
         )
 
-    # Every merged heartbeat is committed instead of being held in memory.
-    assert len(sent) >= 3
+    # Every merged heartbeat is committed exactly once instead of held in memory.
+    assert len(sent) == 3

@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import sqlite3
 import threading
 from time import sleep
 from logging import basicConfig, DEBUG, WARNING
@@ -292,38 +293,79 @@ def test_retry_delay_honors_retry_after():
     assert _retry_delay(resp("Wed, 21 Oct 2026 07:28:00 GMT")) == RETRY_DELAY_DEFAULT
 
 
-def test_transient_ack_error_does_not_kill_queue_thread():
-    """aw-client#172: a transient SQLite error in task_done() ended the thread."""
-    import sqlite3
-
-    posted = []
+def test_transient_ack_error_does_not_kill_queue_thread(tmp_path):
+    """A delivered heartbeat must be acked locally without another HTTP request."""
+    operations = []
 
     class RecordingClient(MockClient):
         def _post(self, endpoint, data):
-            posted.append(data)
+            operation = ("post", data["n"])
+            if operation in operations:
+                # The server becomes unavailable for an already-delivered heartbeat.
+                raise _http_error(429)
+            operations.append(operation)
             return requests.Response()
 
-    rq = RequestQueue(RecordingClient())  # type: ignore
-    rq._try_connect = lambda: True  # type: ignore
+    rq = _fresh_queue(RecordingClient(), tmp_path)
     rq.connected = True
 
     real_task_done = rq._persistqueue.task_done
     failures = [sqlite3.OperationalError("disk I/O error")]
 
     def flaky_task_done():
+        request = rq._current
+        assert request is not None
         if failures:
+            operations.append(("ack_failed", request.data["n"]))
             raise failures.pop()
-        return real_task_done()
+        real_task_done()
+        operations.append(("acked", request.data["n"]))
 
     rq._persistqueue.task_done = flaky_task_done  # type: ignore
     rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 2})
     rq.start()
     try:
-        sleep(0.5)
-        rq.add_request("/api/0/buckets/test/heartbeat", {"n": 2})
         assert rq.wait_for_queue_empty(timeout=5)
         assert rq.is_alive()
-        assert {"n": 2} in posted
+        assert operations == [
+            ("post", 1),
+            ("ack_failed", 1),
+            ("acked", 1),
+            ("post", 2),
+            ("acked", 2),
+        ]
     finally:
         rq.stop()
-        rq.join()
+        rq.join(timeout=2)
+
+
+@pytest.mark.parametrize("error_type", [OSError, sqlite3.OperationalError])
+def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
+    """Shutdown interrupts a sustained local ack failure and keeps the request."""
+    ack_failed = threading.Event()
+    client = FlakyClient(None)
+    rq = _fresh_queue(client, tmp_path)
+    rq.connected = True
+
+    def failing_task_done():
+        ack_failed.set()
+        raise error_type("disk unavailable")
+
+    rq._persistqueue.task_done = failing_task_done  # type: ignore
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq.start()
+    try:
+        assert ack_failed.wait(timeout=2)
+    finally:
+        rq.stop()
+        rq.join(timeout=2)
+
+    assert not rq.is_alive()
+    assert client.post_calls == 1
+    assert rq._current is not None
+    assert rq._current.data == {"n": 1}
+    restarted = _fresh_queue(client, tmp_path)
+    request = restarted._get_next()
+    assert request is not None
+    assert request.data == {"n": 1}

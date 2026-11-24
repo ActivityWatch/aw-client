@@ -687,16 +687,18 @@ class RequestQueue(threading.Thread):
         return self._current
 
     def _task_done(self) -> None:
-        try:
-            self._persistqueue.task_done()
-        # A transient disk-full/I/O error on the ack must not end the queue
-        # thread (aw-client#172). Keep the request current so the loop resends
-        # and re-acks it; a replayed heartbeat merges into the last event.
-        except (OSError, sqlite3.OperationalError) as e:
-            logger.warning(f"Failed to mark queued request done, will retry: {e}")
-            self.wait(1)
-            return
-        self._current = None
+        # Delivery is finished: retry only the local ack, independently of the
+        # server's availability. Keep the request persisted if shutdown wins.
+        while not self.should_stop():
+            try:
+                self._persistqueue.task_done()
+            except (OSError, sqlite3.OperationalError) as e:
+                logger.warning(f"Failed to mark queued request done, will retry: {e}")
+                if self.wait(1):
+                    return
+            else:
+                self._current = None
+                return
 
     def _create_buckets(self) -> None:
         for bucket in self._registered_buckets:
