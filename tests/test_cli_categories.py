@@ -77,7 +77,7 @@ def test_commands_resolve_categories_on_selected_client(
         assert "Google Docs|libreoffice|ReText" in query
     assert "aw-watcher-window_fixture-host" in query
     assert "aw-watcher-afk_fixture-host" in query
-    assert selected.query.call_args.kwargs == {"cache": False, "name": None}
+    assert selected.query.call_args.kwargs == {"cache": None, "name": None}
 
 
 @pytest.mark.parametrize("standalone", [False, True])
