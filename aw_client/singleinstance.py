@@ -76,8 +76,8 @@ class SingleInstance:
                         f"Reentrant SingleInstance acquisition: {self.lockfile}"
                     )
                 _acquiring.add(self.lockfile)
-                pid = os.getpid()
                 try:
+                    pid = os.getpid()
                     fp = open(self.lockfile, "w")
                     try:
                         fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
