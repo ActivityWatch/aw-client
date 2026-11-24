@@ -181,10 +181,21 @@ def test_stalled_delete_does_not_block_disconnect(client, monkeypatch):
     deleter.start()
     try:
         assert deleting.wait(timeout=5)
-        # The worker's reconnect now waits for the bucket lock held by the
-        # stalled DELETE; stop() must still end it.
+        # Wait until run() has started (it clears the stop flag on entry) and
+        # is about to wait for the bucket lock held by the stalled DELETE;
+        # stop() must still end it.
+        queue = client.request_queue
+        connecting = threading.Event()
+        try_connect = queue._try_connect
+
+        def signal_then_connect():
+            connecting.set()
+            return try_connect()
+
+        monkeypatch.setattr(queue, "_try_connect", signal_then_connect)
         client.connect()
-        disconnect = threading.Thread(target=client.disconnect)
+        assert connecting.wait(timeout=5)
+        disconnect = threading.Thread(target=client.disconnect, daemon=True)
         disconnect.start()
         disconnect.join(timeout=3)
         assert not disconnect.is_alive()
@@ -214,8 +225,14 @@ def test_delete_in_flight_is_not_undone_by_queue_replacement(client, monkeypatch
     deleter.start()
     try:
         assert deleting.wait(timeout=5)
-        # Replace the worker while the DELETE is still in flight.
+        # Replace the worker while the DELETE is still in flight. The new
+        # worker must share the registrations, not hold a copy taken now.
+        old_queue = client.request_queue
         replace_queue_while_offline(client, monkeypatch)
+        assert client.request_queue is not old_queue
+        assert client.request_queue._registered_buckets is (
+            old_queue._registered_buckets
+        )
     finally:
         release.set()
         deleter.join(timeout=5)
@@ -223,3 +240,25 @@ def test_delete_in_flight_is_not_undone_by_queue_replacement(client, monkeypatch
 
     assert client.request_queue._try_connect() is True
     assert created == ["buckets/retained"]
+
+
+def test_unregister_keeps_a_concurrent_registration(client, monkeypatch):
+    client.create_bucket("deleted", "test", queued=True)
+    queue = client.request_queue
+    registered = queue._registered_buckets
+
+    class RegisterDuringScan(list):
+        # Register another bucket right after unregister_bucket() has scanned
+        # the list, as a concurrent create_bucket(queued=True) could.
+        fired = False
+
+        def __iter__(self):
+            yield from super().__iter__()
+            if not self.fired:
+                self.fired = True
+                client.create_bucket("concurrent", "test", queued=True)
+
+    shared = RegisterDuringScan(registered)
+    monkeypatch.setattr(client, "_registered_buckets", shared)
+    queue.unregister_bucket("deleted")
+    assert [bucket.id for bucket in client._registered_buckets] == ["concurrent"]

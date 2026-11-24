@@ -846,9 +846,11 @@ class RequestQueue(threading.Thread):
 
     def unregister_bucket(self, bucket_id: str) -> None:
         # Only called after a successful delete, so reconnect won't recreate it.
-        self._registered_buckets[:] = [
-            bucket for bucket in self._registered_buckets if bucket.id != bucket_id
-        ]
+        # Remove in place rather than writing back a filtered copy, which would
+        # drop a bucket another thread registers in the meantime.
+        registered = self._registered_buckets
+        for bucket in [b for b in registered if b.id == bucket_id]:
+            registered.remove(bucket)
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
         bucket = Bucket(bucket_id, event_type)
