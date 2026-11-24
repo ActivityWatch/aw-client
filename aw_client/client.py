@@ -210,12 +210,18 @@ class ActivityWatchClient:
         return request_headers
 
     @always_raise_for_request_errors
-    def _get(self, endpoint: str, params: Optional[dict] = None) -> req.Response:
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[dict] = None,
+        timeout: Optional[float] = None,
+    ) -> req.Response:
         return req.get(
             self._url(endpoint),
             params=params,
             headers=self._headers(),
             proxies=self._proxies,
+            timeout=timeout,
         )
 
     @always_raise_for_request_errors
@@ -248,10 +254,10 @@ class ActivityWatchClient:
             proxies=self._proxies,
         )
 
-    def get_info(self):
+    def get_info(self, timeout: Optional[float] = None):
         """Returns a dict currently containing the keys 'hostname' and 'testing'."""
         endpoint = "info"
-        return self._get(endpoint).json()
+        return self._get(endpoint, timeout=timeout).json()
 
     #
     #   Event get/post requests
@@ -546,9 +552,15 @@ class ActivityWatchClient:
         sleep_time = 0.1
         while True:
             try:
-                self.get_info()
+                # Bound each probe by the time left: a proxy can hold a request
+                # open far longer than the caller's timeout.
+                self.get_info(timeout=max(deadline - monotonic(), 0.1))
                 return
-            except (req.exceptions.ConnectionError, req.exceptions.HTTPError) as e:
+            except (
+                req.exceptions.ConnectionError,
+                req.exceptions.Timeout,
+                req.exceptions.HTTPError,
+            ) as e:
                 # A reverse proxy answers 502/503/504 until the backend is up;
                 # other HTTP errors will not fix themselves (aw-client#172).
                 if isinstance(e, req.exceptions.HTTPError):
