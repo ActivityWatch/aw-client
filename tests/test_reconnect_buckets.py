@@ -262,3 +262,60 @@ def test_unregister_keeps_a_concurrent_registration(client, monkeypatch):
     monkeypatch.setattr(client, "_registered_buckets", shared)
     queue.unregister_bucket("deleted")
     assert [bucket.id for bucket in client._registered_buckets] == ["concurrent"]
+
+
+def test_connected_registration_and_delete_are_serialized(client, monkeypatch):
+    posting = threading.Event()
+    release_post = threading.Event()
+    deleting = threading.Event()
+    operations = []
+    errors = []
+
+    def post(endpoint, data):
+        posting.set()
+        assert release_post.wait(timeout=5)
+        operations.append(("create", endpoint))
+
+    def delete(endpoint):
+        operations.append(("delete", endpoint))
+
+    def register():
+        try:
+            client.create_bucket("shared", "test", queued=True)
+        except Exception as error:
+            errors.append(error)
+
+    def delete_bucket():
+        try:
+            deleting.set()
+            client.delete_bucket("shared")
+        except Exception as error:
+            errors.append(error)
+
+    monkeypatch.setattr(client, "_post", post)
+    monkeypatch.setattr(client, "_delete", delete)
+    client.request_queue.connected = True
+    creator = threading.Thread(target=register, daemon=True)
+    deleter = threading.Thread(target=delete_bucket, daemon=True)
+    creator.start()
+    try:
+        assert posting.wait(timeout=5)
+        deleter.start()
+        assert deleting.wait(timeout=5)
+        deleter.join(timeout=0.3)
+        # A DELETE must not slip between recording a connected registration
+        # and its POST: it would leave a recreated but unregistered bucket.
+        assert deleter.is_alive()
+    finally:
+        release_post.set()
+        creator.join(timeout=5)
+        if deleter.ident is not None:
+            deleter.join(timeout=5)
+    assert not creator.is_alive() and not deleter.is_alive()
+    assert not errors
+    assert operations == [("create", "buckets/shared"), ("delete", "buckets/shared")]
+    assert client.request_queue._registered_buckets == []
+    # A later reconnect must respect the final delete, not recreate the bucket.
+    operations.clear()
+    assert client.request_queue._try_connect() is True
+    assert operations == []

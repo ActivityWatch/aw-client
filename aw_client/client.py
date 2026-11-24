@@ -853,13 +853,16 @@ class RequestQueue(threading.Thread):
             registered.remove(bucket)
 
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
-        bucket = Bucket(bucket_id, event_type)
-        self._registered_buckets.append(bucket)
+        # Keep registration and its immediate POST atomic with deletion, or
+        # a DELETE could forget the registration before the POST recreates it.
+        with self.client._buckets_lock:
+            bucket = Bucket(bucket_id, event_type)
+            self._registered_buckets.append(bucket)
 
-        if not self.connected:
-            return
+            if not self.connected:
+                return
 
-        try:
-            self.client.create_bucket(bucket_id, event_type)
-        except req.RequestException:
-            self.connected = False
+            try:
+                self.client.create_bucket(bucket_id, event_type)
+            except req.RequestException:
+                self.connected = False
