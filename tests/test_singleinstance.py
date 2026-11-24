@@ -129,3 +129,23 @@ def test_existing_unowned_file_can_be_acquired(tmp_path):
         acquired = _contender(tmp_path)
         assert acquired.returncode == 0, acquired.stderr
         assert "acquired and released" in acquired.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
+def test_same_process_duplicate_keeps_owner_lock(tmp_path, monkeypatch):
+    """#172: lockf locks belong to the process, so collecting a second same-name
+    instance closed its file and released the first instance's lock."""
+    import gc
+
+    monkeypatch.setattr(singleinstance, "get_cache_dir", lambda name: str(tmp_path))
+    owner = singleinstance.SingleInstance("subprocess-lock")
+    duplicate = singleinstance.SingleInstance("subprocess-lock")
+    del duplicate
+    gc.collect()
+    denied = _contender(tmp_path)
+    assert denied.returncode != 0, denied.stdout
+    assert "Another instance is already running" in denied.stderr
+    del owner
+    gc.collect()
+    acquired = _contender(tmp_path)
+    assert acquired.returncode == 0, acquired.stderr
