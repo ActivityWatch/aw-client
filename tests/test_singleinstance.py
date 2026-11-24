@@ -191,9 +191,21 @@ def test_concurrent_clients_keep_owner_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(singleinstance, "get_cache_dir", lambda name: str(tmp_path))
     lock_entered = Event()
     release_lock = Event()
-    second_open = Event()
+    second_reached_lock = Event()
     real_lockf = singleinstance.fcntl.lockf
     real_open = open
+    registry_lock = singleinstance._held_lock
+
+    class ObservedLock:
+        def __enter__(self):
+            if not registry_lock.acquire(blocking=False):
+                # The second constructor has actually reached the held mutex,
+                # not merely been submitted to the thread pool.
+                second_reached_lock.set()
+                registry_lock.acquire()
+
+        def __exit__(self, *exc):
+            registry_lock.release()
 
     def delayed_lockf(fp, mode):
         if not lock_entered.is_set():
@@ -202,10 +214,14 @@ def test_concurrent_clients_keep_owner_lock(tmp_path, monkeypatch):
         return real_lockf(fp, mode)
 
     def tracked_open(*args, **kwargs):
+        fp = real_open(*args, **kwargs)
         if lock_entered.is_set():
-            second_open.set()
-        return real_open(*args, **kwargs)
+            # On the unfixed implementation there is no mutex to observe.
+            # Signal only after the second descriptor has really been opened.
+            second_reached_lock.set()
+        return fp
 
+    monkeypatch.setattr(singleinstance, "_held_lock", ObservedLock())
     monkeypatch.setattr(singleinstance.fcntl, "lockf", delayed_lockf)
     monkeypatch.setattr(singleinstance, "open", tracked_open, raising=False)
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -213,9 +229,9 @@ def test_concurrent_clients_keep_owner_lock(tmp_path, monkeypatch):
         assert lock_entered.wait(5)
         second = pool.submit(singleinstance.SingleInstance, "subprocess-lock")
         try:
-            # The unfixed constructor opens a second descriptor while the first
-            # is acquiring its lock. A serialized constructor waits instead.
-            second_open.wait(0.2)
+            # Do not release the first constructor until the second has either
+            # contended on the mutex or opened its own descriptor (the bug).
+            assert second_reached_lock.wait(5)
         finally:
             release_lock.set()
         owner = first.result(timeout=5)
@@ -274,4 +290,40 @@ assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
         text=True,
         timeout=15,
     )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock semantics")
+def test_gc_during_lockfile_open_does_not_deadlock(tmp_path):
+    script = """
+import gc
+import sys
+from aw_client import singleinstance
+
+singleinstance.get_cache_dir = lambda name: sys.argv[1]
+gc.disable()
+old = singleinstance.SingleInstance("old-lock")
+old.cycle = old
+old_fp = old.fp
+del old
+real_open = open
+
+def collecting_open(*args, **kwargs):
+    gc.collect()
+    return real_open(*args, **kwargs)
+
+singleinstance.open = collecting_open
+owner = singleinstance.SingleInstance("subprocess-lock")
+assert old_fp.closed, "old cyclic instance was not collected"
+del owner
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("garbage collection during lockfile open deadlocked")
     assert result.returncode == 0, result.stderr
