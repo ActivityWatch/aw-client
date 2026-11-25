@@ -187,6 +187,12 @@ class ActivityWatchClient:
 
         self.commit_interval = client_config["commit_interval"]
 
+        # Buckets to (re)create whenever the queue connects. The client owns
+        # them, not the queue, so replacing the worker in disconnect() cannot
+        # lose a registration or undo a delete that is in flight. The lock
+        # serializes reconnect bucket creation with delete_bucket().
+        self._registered_buckets = []  # type: List[Bucket]
+        self._buckets_lock = threading.Lock()
         self.request_queue = RequestQueue(self)
         # Dict of each last heartbeat in each bucket
         self.last_heartbeat = {}  # type: Dict[str, Event]
@@ -450,7 +456,18 @@ class ActivityWatchClient:
             self._post(endpoint, data)
 
     def delete_bucket(self, bucket_id: str, force: bool = False):
-        self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
+        # Hold the bucket lock so a reconnect cannot recreate the bucket
+        # between the DELETE and forgetting its registration.
+        with self._buckets_lock:
+            try:
+                self._delete(f"buckets/{bucket_id}" + ("?force=1" if force else ""))
+            except req.HTTPError as e:
+                # 404: already gone, which is the state the caller asked for.
+                # Forget the registration so reconnect does not recreate it.
+                if e.response is not None and e.response.status_code == 404:
+                    self.request_queue.unregister_bucket(bucket_id)
+                raise
+            self.request_queue.unregister_bucket(bucket_id)
 
     # @deprecated
     def setup_bucket(self, bucket_id: str, event_type: str):
@@ -544,8 +561,9 @@ class ActivityWatchClient:
         self.request_queue.join()
 
         # Throw away old thread object, create new one since same thread cannot be started twice
+        old_queue = self.request_queue
         self.request_queue = RequestQueue(
-            self, persistqueue_path=self.request_queue.persistqueue_path
+            self, persistqueue_path=old_queue.persistqueue_path
         )
         # Reset so warn-before-connect fires again if user calls queued ops before reconnecting
         self._warned_queue_before_connect = False
@@ -642,9 +660,6 @@ class RequestQueue(threading.Thread):
         self.connected = False
         self._stop_event = threading.Event()
 
-        # Buckets that will have events queued to them, will be created if they don't exist
-        self._registered_buckets = []  # type: List[Bucket]
-
         self._attempt_reconnect_interval = 10
 
         if persistqueue_path is None:
@@ -687,14 +702,35 @@ class RequestQueue(threading.Thread):
         self._current = None
         self._persistqueue.task_done()
 
-    def _create_buckets(self) -> None:
-        for bucket in self._registered_buckets:
-            self.client.create_bucket(bucket.id, bucket.type)
+    @property
+    def _registered_buckets(self) -> List[Bucket]:
+        # Buckets that will have events queued to them, created if they don't
+        # exist. Kept on the client so they survive replacing this thread.
+        return self.client._registered_buckets
+
+    def _create_buckets(self) -> bool:
+        lock = self.client._buckets_lock
+        # delete_bucket() holds the lock for its whole request. Wait in short
+        # steps so stop() still ends this thread and disconnect()'s join()
+        # cannot hang behind a stalled DELETE.
+        while not lock.acquire(timeout=0.1):
+            if self.should_stop():
+                return False
+        try:
+            for bucket in self._registered_buckets:
+                self.client.create_bucket(bucket.id, bucket.type)
+            # Publish success before releasing the lock: a waiting registration
+            # must either join this creation pass or see a connected queue and
+            # create its bucket itself.
+            self.connected = True
+        finally:
+            lock.release()
+        return True
 
     def _try_connect(self) -> bool:
         try:  # Try to connect
-            self._create_buckets()
-            self.connected = True
+            if not self._create_buckets():
+                return False
             logger.info(
                 f"Connection to aw-server established by {self.client.client_name}"
             )
@@ -833,14 +869,30 @@ class RequestQueue(threading.Thread):
             self._queue_write_failing = False
         return True
 
+    def unregister_bucket(self, bucket_id: str) -> None:
+        # Only called after a successful delete, so reconnect won't recreate it.
+        # Remove in place rather than writing back a filtered copy, which would
+        # drop a bucket another thread registers in the meantime.
+        registered = self._registered_buckets
+        for bucket in [b for b in registered if b.id == bucket_id]:
+            registered.remove(bucket)
+
     def register_bucket(self, bucket_id: str, event_type: str) -> None:
-        bucket = Bucket(bucket_id, event_type)
-        self._registered_buckets.append(bucket)
+        # Keep registration and its immediate POST atomic with deletion, or
+        # a DELETE could forget the registration before the POST recreates it.
+        with self.client._buckets_lock:
+            bucket = Bucket(bucket_id, event_type)
+            self._registered_buckets.append(bucket)
 
-        if not self.connected:
-            return
+            # disconnect() may have replaced this queue while we waited for the
+            # lock. Check the queue now serving the client: its creation pass
+            # either already ran (connected, so POST here) or will include this
+            # bucket from the shared list.
+            current = self.client.request_queue
+            if not current.connected:
+                return
 
-        try:
-            self.client.create_bucket(bucket_id, event_type)
-        except req.RequestException:
-            self.connected = False
+            try:
+                self.client.create_bucket(bucket_id, event_type)
+            except req.RequestException:
+                current.connected = False

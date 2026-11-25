@@ -25,6 +25,9 @@ class MockClient:
     def __init__(self):
         self.testing = True
         self.create_bucket_calls = []
+        # The real client owns the bucket registrations and their lock.
+        self._registered_buckets = []
+        self._buckets_lock = threading.Lock()
 
     def get_buckets(self, *args, **kwargs):
         print("Called get_buckets")
@@ -70,6 +73,7 @@ def test_complex():
 def test_register_bucket_creates_immediately_when_connected():
     client = MockClient()
     rq = RequestQueue(client)  # type: ignore
+    client.request_queue = rq  # type: ignore[attr-defined]
     rq.connected = True
 
     rq.register_bucket("test-bucket", "test-type")
@@ -85,6 +89,7 @@ def test_register_bucket_marks_queue_disconnected_on_create_failure():
 
     client = FailingClient()
     rq = RequestQueue(client)  # type: ignore
+    client.request_queue = rq  # type: ignore[attr-defined]
     rq.connected = True
 
     rq.register_bucket("test-bucket", "test-type")
