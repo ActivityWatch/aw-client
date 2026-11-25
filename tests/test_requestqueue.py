@@ -380,6 +380,61 @@ def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
     assert request.data == {"n": 1}
 
 
+def test_ack_failure_warns_once(caplog):
+    """A sustained local ack failure warns once, not once per retry."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    rq._current = object()  # type: ignore[assignment]
+
+    attempts = 0
+
+    def failing_task_done():
+        raise sqlite3.OperationalError("database is locked")
+
+    def stop_after_three_retries(seconds):
+        nonlocal attempts
+        assert seconds == 1
+        attempts += 1
+        return attempts >= 3
+
+    rq._persistqueue.task_done = failing_task_done  # type: ignore
+    rq.wait = stop_after_three_retries  # type: ignore[method-assign]
+
+    with caplog.at_level(DEBUG, logger="aw_client.client"):
+        rq._task_done()
+
+    warnings = [r for r in caplog.records if "will retry" in r.message]
+    debug = [r for r in caplog.records if "(still failing)" in r.message]
+    assert len(warnings) == 1
+    assert len(debug) == 2
+    assert rq._current is not None
+
+
+def test_ack_recovery_is_logged_once(caplog):
+    """A recovered local ack logs the success once and clears the current request."""
+    client = MockClient()
+    rq = RequestQueue(client)  # type: ignore
+    rq._current = object()  # type: ignore[assignment]
+
+    calls = 0
+
+    def flaky_task_done():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise sqlite3.OperationalError("database is locked")
+
+    rq._persistqueue.task_done = flaky_task_done  # type: ignore
+    rq.wait = lambda seconds: False  # type: ignore[method-assign]
+
+    with caplog.at_level(DEBUG, logger="aw_client.client"):
+        rq._task_done()
+
+    recovered = [r for r in caplog.records if "succeeded again" in r.message]
+    assert len(recovered) == 1
+    assert rq._current is None
+
+
 def test_shutdown_during_successful_send_still_acknowledges(tmp_path):
     class StoppingClient(MockClient):
         def _post(self, endpoint, data):

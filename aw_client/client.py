@@ -690,14 +690,26 @@ class RequestQueue(threading.Thread):
         # Delivery is finished: retry only the local ack, independently of the
         # server's availability. Always attempt the first ack after delivery;
         # shutdown cancels retries and leaves a failed ack persisted.
+        failing = False
         while True:
             try:
                 self._persistqueue.task_done()
             except (OSError, sqlite3.OperationalError) as e:
-                logger.warning(f"Failed to mark queued request done, will retry: {e}")
+                # Warn once per failure streak to avoid flooding logs every second.
+                if not failing:
+                    logger.warning(
+                        f"Failed to mark queued request done, will retry: {e}"
+                    )
+                    failing = True
+                else:
+                    logger.debug(
+                        f"Failed to mark queued request done (still failing): {e}"
+                    )
                 if self.wait(1):
                     return
             else:
+                if failing:
+                    logger.info("Marking queued request done succeeded again")
                 self._current = None
                 return
 
