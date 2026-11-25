@@ -73,6 +73,7 @@ def test_complex():
 def test_register_bucket_creates_immediately_when_connected():
     client = MockClient()
     rq = RequestQueue(client)  # type: ignore
+    client.request_queue = rq  # type: ignore[attr-defined]
     rq.connected = True
 
     rq.register_bucket("test-bucket", "test-type")
@@ -88,6 +89,7 @@ def test_register_bucket_marks_queue_disconnected_on_create_failure():
 
     client = FailingClient()
     rq = RequestQueue(client)  # type: ignore
+    client.request_queue = rq  # type: ignore[attr-defined]
     rq.connected = True
 
     rq.register_bucket("test-bucket", "test-type")

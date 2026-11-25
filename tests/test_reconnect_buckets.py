@@ -357,3 +357,53 @@ def test_registration_at_reconnect_lock_release_is_created(client, monkeypatch):
         "existing",
         "concurrent",
     ]
+
+
+def test_registration_waiting_through_queue_replacement_is_created(client, monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        client, "_post", lambda endpoint, data: created.append(endpoint)
+    )
+    lock = client._buckets_lock
+    waiting = threading.Event()
+
+    class SignalOnAcquire:
+        def acquire(self, *args, **kwargs):
+            waiting.set()
+            return lock.acquire(*args, **kwargs)
+
+        def release(self):
+            lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.release()
+
+    monkeypatch.setattr(client, "_buckets_lock", SignalOnAcquire())
+    old_queue = client.request_queue
+    assert not old_queue.connected
+
+    lock.acquire()
+    registration = threading.Thread(
+        target=client.create_bucket, args=("late", "test"), kwargs={"queued": True}
+    )
+    registration.start()
+    try:
+        assert waiting.wait(timeout=5)
+        # While the registration waits, disconnect() replaces the queue and the
+        # new worker finishes its creation pass, which ran before "late" was
+        # registered.
+        new_queue = client_module.RequestQueue(
+            client, persistqueue_path=old_queue.persistqueue_path
+        )
+        client.request_queue = new_queue
+        new_queue.connected = True
+    finally:
+        lock.release()
+    registration.join(timeout=5)
+    assert not registration.is_alive()
+
+    assert created == ["buckets/late"]

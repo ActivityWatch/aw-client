@@ -862,10 +862,15 @@ class RequestQueue(threading.Thread):
             bucket = Bucket(bucket_id, event_type)
             self._registered_buckets.append(bucket)
 
-            if not self.connected:
+            # disconnect() may have replaced this queue while we waited for the
+            # lock. Check the queue now serving the client: its creation pass
+            # either already ran (connected, so POST here) or will include this
+            # bucket from the shared list.
+            current = self.client.request_queue
+            if not current.connected:
                 return
 
             try:
                 self.client.create_bucket(bucket_id, event_type)
             except req.RequestException:
-                self.connected = False
+                current.connected = False
