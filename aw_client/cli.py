@@ -123,7 +123,8 @@ def events(obj: _Context, bucket_id: str):
 @click.option(
     "--timezone",
     help="Time zone for start and stop options."
-    " Must be a valid IANA identifier like e.g. 'Europe/Warsaw'.",
+    " Must be a valid IANA identifier like e.g. 'Europe/Warsaw'."
+    " Defaults to the system time zone.",
 )
 @click.pass_obj
 def query(
@@ -145,6 +146,10 @@ def query(
             start = start.replace(tzinfo=zone_info)
         if stop.tzinfo is None:
             stop = stop.replace(tzinfo=zone_info)
+    if not start.tzinfo:
+        start = start.astimezone()
+    if not stop.tzinfo:
+        stop = stop.astimezone()
 
     result = obj.client.query(query, [(start, stop)], cache=cache or None, name=name)
     if _json:
