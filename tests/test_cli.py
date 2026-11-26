@@ -15,7 +15,7 @@ def kolkata_time_zone(monkeypatch):
     if not hasattr(time, "tzset"):
         pytest.skip("time.tzset() is not available on Windows")
     with monkeypatch.context() as m:
-        m.setenv("TZ", "Asia/Kolkata")
+        m.setenv("TZ", "IST-5:30")
         time.tzset()
         yield
     time.tzset()
