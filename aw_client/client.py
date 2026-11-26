@@ -370,7 +370,10 @@ class ActivityWatchClient:
         """
 
         endpoint = f"buckets/{bucket_id}/heartbeat?pulsetime={pulsetime}"
-        _commit_interval = commit_interval or self.commit_interval
+        # 0 means "commit every merged heartbeat"; only None selects the default.
+        _commit_interval = (
+            commit_interval if commit_interval is not None else self.commit_interval
+        )
 
         if queued:
             self._warn_queue_before_connect()
@@ -684,8 +687,31 @@ class RequestQueue(threading.Thread):
         return self._current
 
     def _task_done(self) -> None:
-        self._current = None
-        self._persistqueue.task_done()
+        # Delivery is finished: retry only the local ack, independently of the
+        # server's availability. Always attempt the first ack after delivery;
+        # shutdown cancels retries and leaves a failed ack persisted.
+        failing = False
+        while True:
+            try:
+                self._persistqueue.task_done()
+            except (OSError, sqlite3.OperationalError) as e:
+                # Warn once per failure streak to avoid flooding logs every second.
+                if not failing:
+                    logger.warning(
+                        f"Failed to mark queued request done, will retry: {e}"
+                    )
+                    failing = True
+                else:
+                    logger.debug(
+                        f"Failed to mark queued request done (still failing): {e}"
+                    )
+                if self.wait(1):
+                    return
+            else:
+                if failing:
+                    logger.info("Marking queued request done succeeded again")
+                self._current = None
+                return
 
     def _create_buckets(self) -> None:
         for bucket in self._registered_buckets:

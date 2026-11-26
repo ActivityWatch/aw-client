@@ -321,3 +321,16 @@ def test_wait_for_start_bounds_each_probe_by_the_time_left(monkeypatch):
     with pytest.raises(Exception, match="did not start in time"):
         client.wait_for_start(timeout=10)
     assert clock.now <= 10.1 + 1e-9
+
+
+def test_queued_heartbeat_commit_interval_zero_commits_every_merge():
+    """aw-client#172: commit_interval=0 is falsy and was replaced by the default."""
+    client, sent = _client_with_flaky_queue([True] * 10)
+    client.commit_interval = 10
+    for t in range(4):
+        client.heartbeat(
+            "b", _event(t, {"a": 1}), pulsetime=10, queued=True, commit_interval=0
+        )
+
+    # Every merged heartbeat is committed exactly once instead of held in memory.
+    assert len(sent) == 3

@@ -7,6 +7,7 @@ It is said about testing that it makes you able to refactorize
 with confidence, and I need some of that right now.
 """
 
+import sqlite3
 import threading
 from time import sleep
 from logging import basicConfig, DEBUG, WARNING
@@ -290,3 +291,161 @@ def test_retry_delay_honors_retry_after():
     assert _retry_delay(resp("0")) == RETRY_DELAY_DEFAULT  # floored
     # HTTP-date form is not parsed, falls back to default
     assert _retry_delay(resp("Wed, 21 Oct 2026 07:28:00 GMT")) == RETRY_DELAY_DEFAULT
+
+
+def test_transient_ack_error_does_not_kill_queue_thread(tmp_path):
+    """A delivered heartbeat must be acked locally without another HTTP request."""
+    operations = []
+
+    class RecordingClient(MockClient):
+        def _post(self, endpoint, data):
+            operation = ("post", data["n"])
+            if operation in operations:
+                # The server becomes unavailable for an already-delivered heartbeat.
+                raise _http_error(429)
+            operations.append(operation)
+            return requests.Response()
+
+    rq = _fresh_queue(RecordingClient(), tmp_path)
+    rq.connected = True
+
+    real_task_done = rq._persistqueue.task_done
+    failures = [sqlite3.OperationalError("disk I/O error")]
+
+    def flaky_task_done():
+        request = rq._current
+        assert request is not None
+        if failures:
+            operations.append(("ack_failed", request.data["n"]))
+            raise failures.pop()
+        real_task_done()
+        operations.append(("acked", request.data["n"]))
+
+    rq._persistqueue.task_done = flaky_task_done  # type: ignore
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 2})
+    rq.start()
+    try:
+        assert rq.wait_for_queue_empty(timeout=5)
+        assert rq.is_alive()
+        assert operations == [
+            ("post", 1),
+            ("ack_failed", 1),
+            ("acked", 1),
+            ("post", 2),
+            ("acked", 2),
+        ]
+    finally:
+        rq.stop()
+        rq.join(timeout=2)
+
+
+@pytest.mark.parametrize("error_type", [OSError, sqlite3.OperationalError])
+def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
+    """Shutdown interrupts a sustained local ack failure and keeps the request."""
+    retry_wait_entered = threading.Event()
+    client = FlakyClient(None)
+    rq = _fresh_queue(client, tmp_path)
+    rq.connected = True
+
+    real_wait = rq.wait
+
+    def observed_wait(seconds):
+        assert seconds == 1
+        retry_wait_entered.set()
+        # A long deadline makes an uninterruptible retry fail decisively.
+        return real_wait(10)
+
+    rq.wait = observed_wait  # type: ignore[method-assign]
+
+    def failing_task_done():
+        raise error_type("disk unavailable")
+
+    rq._persistqueue.task_done = failing_task_done  # type: ignore
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq.start()
+    try:
+        assert retry_wait_entered.wait(timeout=2)
+    finally:
+        rq.stop()
+        rq.join(timeout=2)
+
+    assert not rq.is_alive()
+    assert client.post_calls == 1
+    assert rq._current is not None
+    assert rq._current.data == {"n": 1}
+    restarted = _fresh_queue(client, tmp_path)
+    request = restarted._get_next()
+    assert request is not None
+    assert request.data == {"n": 1}
+
+
+def test_ack_failure_warns_once(caplog, tmp_path):
+    """A sustained local ack failure warns once, not once per retry."""
+    client = MockClient()
+    rq = _fresh_queue(client, tmp_path)
+    rq._current = object()  # type: ignore[assignment]
+
+    attempts = 0
+
+    def failing_task_done():
+        raise sqlite3.OperationalError("database is locked")
+
+    def stop_after_three_retries(seconds):
+        nonlocal attempts
+        assert seconds == 1
+        attempts += 1
+        return attempts >= 3
+
+    rq._persistqueue.task_done = failing_task_done  # type: ignore
+    rq.wait = stop_after_three_retries  # type: ignore[method-assign]
+
+    with caplog.at_level(DEBUG, logger="aw_client.client"):
+        rq._task_done()
+
+    warnings = [r for r in caplog.records if "will retry" in r.message]
+    debug = [r for r in caplog.records if "(still failing)" in r.message]
+    assert len(warnings) == 1
+    assert len(debug) == 2
+    assert rq._current is not None
+
+
+def test_ack_recovery_is_logged_once(caplog, tmp_path):
+    """A recovered local ack logs the success once and clears the current request."""
+    client = MockClient()
+    rq = _fresh_queue(client, tmp_path)
+    rq._current = object()  # type: ignore[assignment]
+
+    calls = 0
+
+    def flaky_task_done():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise sqlite3.OperationalError("database is locked")
+
+    rq._persistqueue.task_done = flaky_task_done  # type: ignore
+    rq.wait = lambda seconds: False  # type: ignore[method-assign]
+
+    with caplog.at_level(DEBUG, logger="aw_client.client"):
+        rq._task_done()
+
+    recovered = [r for r in caplog.records if "succeeded again" in r.message]
+    assert len(recovered) == 1
+    assert rq._current is None
+
+
+def test_shutdown_during_successful_send_still_acknowledges(tmp_path):
+    class StoppingClient(MockClient):
+        def _post(self, endpoint, data):
+            rq.stop()
+            return requests.Response()
+
+    rq = _fresh_queue(StoppingClient(), tmp_path)
+    rq.connected = True
+    rq.add_request("/api/0/buckets/test/heartbeat", {"n": 1})
+    rq._dispatch_request()
+    assert rq.should_stop()
+    assert rq._current is None
+    restarted = _fresh_queue(MockClient(), tmp_path)
+    assert restarted._get_next() is None
