@@ -380,10 +380,10 @@ def test_ack_retry_stops_without_losing_persisted_request(tmp_path, error_type):
     assert request.data == {"n": 1}
 
 
-def test_ack_failure_warns_once(caplog):
+def test_ack_failure_warns_once(caplog, tmp_path):
     """A sustained local ack failure warns once, not once per retry."""
     client = MockClient()
-    rq = RequestQueue(client)  # type: ignore
+    rq = _fresh_queue(client, tmp_path)
     rq._current = object()  # type: ignore[assignment]
 
     attempts = 0
@@ -410,10 +410,10 @@ def test_ack_failure_warns_once(caplog):
     assert rq._current is not None
 
 
-def test_ack_recovery_is_logged_once(caplog):
+def test_ack_recovery_is_logged_once(caplog, tmp_path):
     """A recovered local ack logs the success once and clears the current request."""
     client = MockClient()
-    rq = RequestQueue(client)  # type: ignore
+    rq = _fresh_queue(client, tmp_path)
     rq._current = object()  # type: ignore[assignment]
 
     calls = 0
